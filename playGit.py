@@ -46,6 +46,7 @@ def main():
             git = connect_to_git(login= data['user'])
         else:
             git = connect_to_git(data['token'])
+        print("get here")
         SCS = git.get_organization("SCS-Carleton")
         count =0
         # Set up credential helper

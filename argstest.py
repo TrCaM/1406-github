@@ -4,7 +4,8 @@
 
 from github import Github
 
-git = Github('14bd0e85d248f8a39defa2c926a2e9ea684b4e0')
-repo = git.get_repo('1406-github')
+git = Github('1944d85c58233a0a8822ac8c1c82898b5b777b42')
+repos = git.get_organization("SCS-Carleton")
 
-print(repo.name)
+for user in repos.get_repos():
+    print(user.name)
