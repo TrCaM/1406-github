@@ -40,13 +40,15 @@ def main():
                 json.dump(data, f, ensure_ascii = False)
         if args.token == None:
             data['token'] = None
+
+
+
     if args.clone:
         # get the git with authorization
         if not data['token']:
             git = connect_to_git(login= data['user'])
         else:
             git = connect_to_git(data['token'])
-        print("get here")
         SCS = git.get_organization("SCS-Carleton")
         count =0
         # Set up credential helper
@@ -109,6 +111,7 @@ def safe_open_w(path):
     '''
     mkdir_p(os.path.dirname(path))
     return open(path, 'w')
+
 
 
 if __name__ == '__main__':
