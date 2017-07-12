@@ -99,9 +99,9 @@ def clone_repo(repo_name, dir_path, *org_or_user):
     try:
         print("Cloning ", repo_name, "...")
         if not org_or_user:
-            subprocess.run(["git", "clone", "https://github.com/SCS-Carleton/" + repo_name + ".git", dir_path +"submissions/" + repo_name])
+            subprocess.run(["git", "clone", "https://github.com/SCS-Carleton/" + repo_name + ".git", dir_path +"/submissions/" + repo_name])
         else:
-            subprocess.run(["git", "clone", "https://github.com/"+ "/".join(org_or_user) + "/" + repo_name + ".git", dir_path + "submissions/" + repo_name])
+            subprocess.run(["git", "clone", "https://github.com/"+ "/".join(org_or_user) + "/" + repo_name + ".git", dir_path + "/submissions/" + repo_name])
 
     except Exception as e:
         print(e.message)
