@@ -5,7 +5,7 @@
 #  git config --global credential.helper 'cache --timeout 7200'
 import subprocess, getpass, argparse, os, os.path, json, errno
 from github import Github
-
+from git import Repo
 
 # print('sys.argv[1] is', sys.argv[1]);
 
@@ -21,6 +21,7 @@ def main():
                          action="store_true")
     parser.add_argument("-c", "--clone", metavar= 'prefix',  help= "clone all repository in SCS-Carleton beginning with the pattern")
     parser.add_argument("-d", "--dir", metavar= 'directory',  help= "the directory path to save the clone folder")
+    parser.add_argument("-a", "--add", metavar = 'prefix and files ', nargs= '*', help = "Commit files to the remote repositories of all students")
     args = parser.parse_args()
     try:
         with open("./data/data.json", "r") as f:
@@ -44,7 +45,7 @@ def main():
 
 
 
-    if args.clone:
+    if args.clone or args.add:
         # get the git with authorization
         if not data['token']:
             git = connect_to_git(login= data['user'])
@@ -52,22 +53,28 @@ def main():
             git = connect_to_git(data['token'])
         SCS = git.get_organization("SCS-Carleton")
         count =0
-
-        if args.dir:
-            if os.path.isdir(args.dir):
-                data['dir'] = os.path.abspath(args.dir)
-            else:
-                raise Exception
+        if args.add:
+            print(args.add[1:])
+            for path in args.add[1:]:
+                if not os.path.isfile:
+                    raise Exception
+            add_files(args.add[1:], args.add[0], SCS)
         else:
-            data['dir'] = './'
-        with safe_open_w("./data/data.json") as f:
-            json.dump(data, f, ensure_ascii = False)
-        # Set up credential helper
-        for repo in SCS.get_repos():
-            if repo.name.startswith(args.clone):
-                count+=1
-                clone_repo(repo.name, data['dir'])
-        print("There are total " + str(count) + " submissions cloned")
+            if args.dir:
+                if os.path.isdir(args.dir):
+                    data['dir'] = os.path.abspath(args.dir)
+                else:
+                    raise Exception
+            else:
+                data['dir'] = './'
+            with safe_open_w("./data/data.json") as f:
+                json.dump(data, f, ensure_ascii = False)
+            # Set up credential helper
+            for repo in SCS.get_repos():
+                if repo.name.startswith(args.clone):
+                    count+=1
+                    clone_repo(repo.name, data['dir'])
+            print("There are total " + str(count) + " submissions cloned")
 
 def connect_to_git(token=None, login=None):
     """ Get the github object that connect to the github account
@@ -123,6 +130,18 @@ def safe_open_w(path):
     mkdir_p(os.path.dirname(path))
     return open(path, 'w')
 
+def add_files(file_list, prefix, SCS):
+    count = 0
+    commit_message = 'Added files: ' + ','.join(file_list)
+    for repo in SCS.get_repos():
+        if repo.name.startswith(prefix):
+            count+=1
+            gitpy_repo = Repo(repo.name)
+            gitpy_repo.index.add(file_list)
+            gitpy_repo.index.commit(commit_message)
+            origin = gitpy_repo.remote('origin')
+            origin.push()
+    print("There are total " + str(count) + " commits  done")
 
 
 if __name__ == '__main__':
