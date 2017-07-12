@@ -1,6 +1,0 @@
-14bd0e85d248f8a39defa2c926a2e9ea684b4e0b
-
-curl -H 'Authorization: token 14bd0e85d248f8a39defa2c926a2e9ea684b4e0b'
-
-DELETE /repos/:owner/:repo
-af19b6706ac6c1a2b917a06154062142816504b4

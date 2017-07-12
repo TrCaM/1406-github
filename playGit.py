@@ -1,9 +1,10 @@
 # Written by: Tri Cao
 # Note: This only works for Python3 please install Python3 and pip before use
 #       To install PyGithub with pip: pip install PyGithub
-# To not typing username and password multiple time consider cache your information:
+# To not typing username and password multiple time consider cache your
+# information:
 #  git config --global credential.helper 'cache --timeout 7200'
-import subprocess, getpass, argparse, os, os.path, json, errno
+import subprocess, getpass, argparse, os, os.path, json, errno, re
 from github import Github
 from git import Repo
 
@@ -17,11 +18,15 @@ def main():
     parser = argparse.ArgumentParser(prog='playGit.py')
     parser.add_argument("-u", "--user", help ="authorize with github username")
     parser.add_argument("-t", "--token", help = "authorize with github token")
-    parser.add_argument("-s", "--save", help = "save the provided information (token or username)",
-                         action="store_true")
-    parser.add_argument("-c", "--clone", metavar= 'prefix',  help= "clone all repository in SCS-Carleton beginning with the pattern")
-    parser.add_argument("-d", "--dir", metavar= 'directory',  help= "the directory path to save the clone folder")
-    parser.add_argument("-a", "--add", metavar = 'prefix and files ', nargs= '*', help = "Commit files to the remote repositories of all students")
+    parser.add_argument("-s", "--save", help = "save the provided information \
+                        (token or username)",action="store_true")
+    parser.add_argument("-c", "--clone", metavar= 'prefix',  help= "clone all \
+                        repository in SCS-Carleton beginning with the pattern")
+    parser.add_argument("-d", "--dir", metavar= 'directory',  help= "the \
+                        directory path to save the clone folder")
+    parser.add_argument("-a", "--add", metavar = 'prefix and files ', nargs= '*'
+                        ,help = "Commit files to the remote repositories of all \
+                        students")
     args = parser.parse_args()
     try:
         with open("./data/data.json", "r") as f:
@@ -69,12 +74,45 @@ def main():
                 data['dir'] = './'
             with safe_open_w("./data/data.json") as f:
                 json.dump(data, f, ensure_ascii = False)
-            # Set up credential helper
+
+            # Save the students information
+            students = [];
+            # Save the inavalid folder (For late or not providing good information)
+            invalid_submission = [];
             for repo in SCS.get_repos():
                 if repo.name.startswith(args.clone):
                     count+=1
                     clone_repo(repo.name, data['dir'])
-            print("There are total " + str(count) + " submissions cloned")
+                    path = data['dir'] +"submissions/" + repo.name
+                    try:
+                        with open(path + '/submit-01', 'r') as f:
+                            student ={'id'       : f.readline().strip(),
+                                      'email'    : f.readline().strip(),
+                                      'name'     : f.readline().strip(),
+                                      'username' : f.readline().strip(),
+                                      'repo_path': os.path.abspath(path)
+                                      }
+                        check_info(student)
+                    except EnvironmentError:
+                        error = "Invalid submission: " + repo.name \
+                                + "doesn't have submit-01"
+                        print()
+                        print(error)
+                        invalid_submission.append(repo.name)
+                    except InvalidError as e:
+                        print()
+                        print(repo.name+ ": ", e)
+                        invalid_submission.append(repo.name)
+                    else:
+                        print("[GOOD]")
+                        students.append(student)
+            with safe_open_w("./data/students.json") as f:
+                json.dump(students, f, ensure_ascii = False, indent= 4)
+            print("There are total ", count," submissions cloned")
+            if invalid_submission:
+                print("There are ",len(invalid_submission), " invalid submissions:")
+                for name_of_invalids in invalid_submission:
+                    print(name_of_invalids)
 
 def connect_to_git(token=None, login=None):
     """ Get the github object that connect to the github account
@@ -95,23 +133,27 @@ def connect_to_git(token=None, login=None):
 def clone_repo(repo_name, dir_path, *org_or_user):
     """Clone a remote repository
 
-    Initiate a subprocess that call git to be launched and clone the specified repo_name
+    Initiate a subprocess that call git to be launched and clone the specified
+    repo_name
 
     Args:
         repo_name: the name of the repository
         dir_path : the directories that user wants to clone into
-        org_or_user: the name of the organization or user that the repo belongs to (Default: "SCS-Caleton")
+        org_or_user: the name of the organization or user that the repo belongs
+        to (Default: "SCS-Caleton")
 
     """
     try:
-        print("Cloning ", repo_name, "...")
+        print("Cloning ", repo_name, "...", end=""),
         if not org_or_user:
-            subprocess.run(["git", "clone", "https://github.com/SCS-Carleton/" + repo_name + ".git", dir_path +"/submissions/" + repo_name])
+            Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+                            ".git", dir_path +"submissions/" + repo_name)
         else:
-            subprocess.run(["git", "clone", "https://github.com/"+ "/".join(org_or_user) + "/" + repo_name + ".git", dir_path + "/submissions/" + repo_name])
-
+            Repo.clone_from("https://github.com/"+ "/".join(org_or_user) +
+                            "/" + repo_name + ".git", dir_path + "submissions/"
+                            + repo_name)
     except Exception as e:
-        print(e.message)
+        print("Faile to clone: " + repo_name)
 
 # Taken from https://stackoverflow.com/a/600612/119527
 def mkdir_p(path):
@@ -143,6 +185,28 @@ def add_files(file_list, prefix, SCS):
             origin.push()
     print("There are total " + str(count) + " commits  done")
 
+class InvalidError(Exception):
+    pass
+
+def check_info(student):
+    ''' Check the provided information in submit-01 file
+    '''
+    email_p = re.compile('\w+@cmail.carleton.ca')
+    id_p = re.compile('\d{9}')
+    name_p = re.compile('^(\w+\s)+\w+$')
+    username_p = re.compile('\w+')
+    error = []
+    if not email_p.match(student['email']):
+        error.append('email')
+    if not id_p.match(student['id']):
+        error.append('id')
+    if not name_p.match(student['name']):
+        error.append('name')
+    if not username_p.match(student['username']):
+        error.append('username')
+    if error:
+        message = "Invalid or lack information: " + ", ".join(error)
+        raise InvalidError(message)
 
 if __name__ == '__main__':
     main()
