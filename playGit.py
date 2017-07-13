@@ -4,6 +4,7 @@
 # To not typing username and password multiple time consider cache your
 # information:
 #  git config --global credential.helper 'cache --timeout 7200'
+#  to Create token: need to install curl
 import subprocess, getpass, argparse, os, os.path, json, errno, re, time
 from github import Github, GithubException
 from git import Repo
@@ -17,9 +18,8 @@ def main():
     """
     parser = argparse.ArgumentParser(prog='playGit.py')
     parser.add_argument("-u", "--user", help ="authorize with github username")
-    parser.add_argument("-t", "--token", help = "authorize with github token")
-    parser.add_argument("-s", "--save", help = "save the provided information \
-                        (token or username)",action="store_true")
+    parser.add_argument("-t", "--token", action = "store_true",
+                         help = "authorize by creating OAuth token")
     parser.add_argument("-c", "--clone", metavar= 'prefix',  help= "clone all \
                         repository in SCS-Carleton beginning with the pattern")
     parser.add_argument("-d", "--dir", metavar= 'directory',  help= "the \
@@ -40,25 +40,24 @@ def main():
     if args.save and not (args.user or args. token or args.dir or args.deadline):
         print("TAtool: no information to save")
         print("TAtool: try 'TAtool --help' for more information")
-    elif args.user or args.token or args.dir or args.deadline:
+    elif args.user or args.dir or args.deadline:
         if args.user:
             data['user'] = args.user
         if args.token:
-            data['token'] = args.token
+            try:
+                data['token'] = create_token(data['user'])
+            except TokenCreateException as e:
+                print("You already have a token, consider deleting it")
+            except ValidationException as e:
+                print(e)
         if args.deadline:
             try:
                 data['deadline'] = time.mktime(time.strptime(args.deadline,
                                    "%Y-%m-%d-%H-%M"))
-                args.save = True
             except ValueError as e:
                 print(e)
-        if args.save:
-            with safe_open_w("./data/data.json") as f:
-                json.dump(data, f, ensure_ascii = False, sort_keys= True)
-        if args.token == None:
-            data['token'] = None
-
-
+        with safe_open_w("./data/data.json") as f:
+            json.dump(data, f, ensure_ascii = False, sort_keys= True)
 
     if args.clone or args.add:
         # get the git with authorization
@@ -66,10 +65,11 @@ def main():
             git = connect_to_git(login= data['user'])
         else:
             git = connect_to_git(data['token'])
+
         try:
             SCS = git.get_organization("SCS-Carleton")
         except GithubException:
-            print("Error: Bad token or wrong username|password")
+            print("Error: Bad (expired) token or wrong username|password")
             return
         ''' Set up some counters
         '''
@@ -173,6 +173,32 @@ def connect_to_git(token=None, login=None):
         password = getpass.getpass()
         return Github(login, password)
 
+class TokenCreateException(Exception):
+    pass
+
+class ValidationException(Exception):
+    pass
+
+
+def create_token(login):
+    """ Create the OAuth token for authorization
+        "IMPORTANT": having curl installed
+    """
+    if not login:
+        login = input("Please enter your username: ")
+    completed_process = subprocess.run(['curl', '-u', login, '-d',
+                    '{"scopes": ["repo", "user"], "note": "getting-started"}',
+                    'https://api.github.com/authorizations'],
+                    stdout = subprocess.PIPE, universal_newlines=True)
+
+    result = json.loads(completed_process.stdout)
+    if result.token:
+        return token
+    else:
+        if result.errors:
+            raise TokenCreateException("You already have a token")
+        else:
+            raise ValidationException("Wrong username|password")
 def clone_repo(repo_name, dir_path, *org_or_user):
     """Clone a remote repository
 
