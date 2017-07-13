@@ -4,8 +4,8 @@
 # To not typing username and password multiple time consider cache your
 # information:
 #  git config --global credential.helper 'cache --timeout 7200'
-import subprocess, getpass, argparse, os, os.path, json, errno, re
-from github import Github
+import subprocess, getpass, argparse, os, os.path, json, errno, re, time
+from github import Github, GithubException
 from git import Repo
 
 # print('sys.argv[1] is', sys.argv[1]);
@@ -27,24 +27,34 @@ def main():
     parser.add_argument("-a", "--add", metavar = 'prefix and files ', nargs= '*'
                         ,help = "Commit files to the remote repositories of all \
                         students")
+    parser.add_argument("-dl", "--deadline", metavar = "YYYY-MM-DD-H:M", help =
+                         "specify the deadline for current assignment")
     args = parser.parse_args()
     try:
         with open("./data/data.json", "r") as f:
             data = json.load(f)
-    except IOError as e:
-        data = {'user': None, 'token' : None, 'dir': None}
+        assert data
+    except Exception as e:
+        data = {'user': None, 'token' : None, 'dir': None, 'deadline' : None}
 
-    if args.save and not (args.user or args. token or args.dir):
+    if args.save and not (args.user or args. token or args.dir or args.deadline):
         print("TAtool: no information to save")
         print("TAtool: try 'TAtool --help' for more information")
-    elif args.user or args.token or args.dir:
+    elif args.user or args.token or args.dir or args.deadline:
         if args.user:
             data['user'] = args.user
         if args.token:
             data['token'] = args.token
+        if args.deadline:
+            try:
+                data['deadline'] = time.mktime(time.strptime(args.deadline,
+                                   "%Y-%m-%d-%H-%M"))
+                args.save = True
+            except ValueError as e:
+                print(e)
         if args.save:
             with safe_open_w("./data/data.json") as f:
-                json.dump(data, f, ensure_ascii = False)
+                json.dump(data, f, ensure_ascii = False, sort_keys= True)
         if args.token == None:
             data['token'] = None
 
@@ -56,8 +66,16 @@ def main():
             git = connect_to_git(login= data['user'])
         else:
             git = connect_to_git(data['token'])
-        SCS = git.get_organization("SCS-Carleton")
-        count =0
+        try:
+            SCS = git.get_organization("SCS-Carleton")
+        except GithubException:
+            print("Error: Bad token or wrong username|password")
+            return
+        ''' Set up some counters
+        '''
+        count =0  # Counter for cloned repositories
+        late = 0  # Counter for late submissions
+        invalid = 0
         if args.add:
             print(args.add[1:])
             for path in args.add[1:]:
@@ -81,38 +99,61 @@ def main():
             invalid_submission = [];
             for repo in SCS.get_repos():
                 if repo.name.startswith(args.clone):
-                    count+=1
                     clone_repo(repo.name, data['dir'])
-                    path = data['dir'] +"submissions/" + repo.name
+                    count+=1
+                    path = os.path.abspath(data['dir'] +"submissions/" + repo.name)
+
+                    ''' Get the time stamp of the last commit
+                    '''
+                    # Time in epoc-unix (integer)
+                    cloned_repo = Repo(path)
+                    epoc_unix = cloned_repo.head.commit.committed_date
+                    submitted_time = time.localtime(epoc_unix)
+
+                    ''' Write student information by reading the submit-01 file
+                    '''
                     try:
                         with open(path + '/submit-01', 'r') as f:
-                            student ={'id'       : f.readline().strip(),
-                                      'email'    : f.readline().strip(),
-                                      'name'     : f.readline().strip(),
-                                      'username' : f.readline().strip(),
-                                      'repo_path': os.path.abspath(path)
+                            student ={'id'         : f.readline().strip(),
+                                      'email'      : f.readline().strip(),
+                                      'name'       : f.readline().strip(),
+                                      'username'   : f.readline().strip(),
+                                      'repo_path'  : path,
+                                      'submit-time': time.strftime(
+                                                    "%H:%M %d %b %Y",
+                                                    submitted_time),
                                       }
                         check_info(student)
+                        if check_time(epoc_unix, data['deadline']):
+                            student['status'] = "OK"
+                        else:
+                            student['status'] = "LATE"
+                            late +=1
                     except EnvironmentError:
                         error = "Invalid submission: " + repo.name \
                                 + "doesn't have submit-01"
-                        print()
-                        print(error)
+                        print(error, flush = True, end= "\r")
                         invalid_submission.append(repo.name)
+                        invalid+=1
                     except InvalidError as e:
-                        print()
-                        print(repo.name+ ": ", e)
+                        print(e, flush =True, end= '\r')
                         invalid_submission.append(repo.name)
+                        invalid+=1
                     else:
-                        print("[GOOD]")
+                        print(student['status'], flush= True, end= '\r')
                         students.append(student)
+
+
             with safe_open_w("./data/students.json") as f:
                 json.dump(students, f, ensure_ascii = False, indent= 4)
-            print("There are total ", count," submissions cloned")
+            print("There are total ", count," submissions cloned (",late,
+                   " late submissions, ",   invalid, " invalid submissions)")
+
             if invalid_submission:
-                print("There are ",len(invalid_submission), " invalid submissions:")
-                for name_of_invalids in invalid_submission:
-                    print(name_of_invalids)
+                print("There are ",len(invalid_submission),
+                      " invalid submissions")
+                with safe_open_w("./data/invalids") as f:
+                    f.write("\n".join(invalid_submission))
 
 def connect_to_git(token=None, login=None):
     """ Get the github object that connect to the github account
@@ -127,6 +168,8 @@ def connect_to_git(token=None, login=None):
     if token:
         return Github(token)
     else:
+        if not login:
+            login = input("Enter your user name: ")
         password = getpass.getpass()
         return Github(login, password)
 
@@ -146,14 +189,15 @@ def clone_repo(repo_name, dir_path, *org_or_user):
     try:
         print("Cloning ", repo_name, "...", end=""),
         if not org_or_user:
-            Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+            cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
                             ".git", dir_path +"submissions/" + repo_name)
         else:
-            Repo.clone_from("https://github.com/"+ "/".join(org_or_user) +
+             cloned_repo = Repo.clone_from("https://github.com/"+ "/".join(org_or_user) +
                             "/" + repo_name + ".git", dir_path + "submissions/"
                             + repo_name)
     except Exception as e:
-        print("Faile to clone: " + repo_name)
+        print("Fail to clone: " + repo_name, end= '\r')
+    return clone_repo
 
 # Taken from https://stackoverflow.com/a/600612/119527
 def mkdir_p(path):
@@ -208,5 +252,10 @@ def check_info(student):
         message = "Invalid or lack information: " + ", ".join(error)
         raise InvalidError(message)
 
+def check_time(current ,deadline):
+    ''' Check if the submit time of the assignment (last commit time) is before
+        the deadline
+    '''
+    return current <= deadline
 if __name__ == '__main__':
     main()
