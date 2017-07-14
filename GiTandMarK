@@ -1,10 +1,12 @@
-# Written by: Tri Cao
-# Note: This only works for Python3 please install Python3 and pip before use
-#       To install PyGithub with pip: pip install PyGithub
-# To not typing username and password multiple time consider cache your
-# information:
-#  git config --global credential.helper 'cache --timeout 7200'
-#  to Create token: need to install curl
+#!/usr/bin/env python3
+'''Written by: Tri Cao
+Note: This only works for Python3 please install Python3 and pip before use
+      To install PyGithub with pip: pip install PyGithub
+To not typing username and password multiple time consider cache your
+information:
+ git config --global credential.helper 'cache --timeout 7200'
+ to Create token: need to install curl
+'''
 import subprocess
 import getpass
 import argparse
@@ -24,49 +26,34 @@ def main():
 
     This function run as a starting point of the program
     """
-    parser = argparse.ArgumentParser(prog='playGit.py')
-    parser.add_argument("-u", "--user", help="authorize with github username")
-    parser.add_argument("-t", "--token", action="store_true",
-                        help="authorize by creating OAuth token")
-    parser.add_argument("-c", "--clone", metavar='prefix',  help="clone all \
-                        repository in SCS-Carleton beginning with the pattern")
-    parser.add_argument("-d", "--dir", metavar='directory',  help="the \
-                        directory path to save the clone folder")
-    parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*', help="Commit files to the remote repositories of all \
-                        students")
-    parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
-                        help="specify the deadline for current assignment")
-    args = parser.parse_args()
 
-    try:
-        with open("./data/data.json", "r") as f:
-            data = json.load(f)
-        assert data
-    except Exception as e:
-        data = {'user': None, 'token': None, 'dir': None, 'deadline': None}
+    # Handle args first
+    args = args_handle()
+    # Get user saved data
+    data = get_data()
 
     if args.user:
         data['user'] = args.user
     if args.token:
         try:
             data['token'] = create_token(data['user'])
-        except TokenCreateException as e:
+        except TokenCreateException:
             print("You already have a token, consider deleting it")
             return
-        except ValidationException as e:
-            print(e)
+        except ValidationException as err:
+            print(err)
             return
     if args.deadline:
         try:
             data['deadline'] = time.mktime(time.strptime(args.deadline,
                                                          "%Y-%m-%d-%H-%M"))
-        except ValueError as e:
-            print(e)
-    with safe_open_w("./data/data.json") as f:
-        json.dump(data, f, ensure_ascii=False, sort_keys=True, indent=4 )
+        except ValueError as err:
+            print(err)
+    with safe_open_w("./data/data.json") as file:
+        json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
 
     if args.clone or args.add:
-        print("Conecting with github...", end="", flush = True)
+        print("Conecting with github...", end="", flush=True)
         # get the git with authorization
         if not data['token']:
             git = connect_to_git(login=data['user'])
@@ -74,7 +61,7 @@ def main():
             git = connect_to_git(data['token'])
 
         try:
-            SCS = git.get_organization("SCS-Carleton")
+            orgs = git.get_organization("SCS-Carleton")
         except GithubException:
             print("Error: Bad (expired) token or wrong username|password")
             return
@@ -88,7 +75,7 @@ def main():
             for path in args.add[1:]:
                 if not os.path.isfile:
                     raise Exception
-            add_files(args.add[1:], args.add[0], SCS)
+            add_files(args.add[1:], args.add[0], orgs)
         else:
             if args.dir:
                 if os.path.isdir(args.dir):
@@ -97,8 +84,8 @@ def main():
                     raise Exception
             else:
                 data['dir'] = './'
-            with safe_open_w("./data/data.json") as f:
-                json.dump(data, f, ensure_ascii=False)
+            with safe_open_w("./data/data.json") as file:
+                json.dump(data, file, ensure_ascii=False)
 
             # Save the students information
             students = []
@@ -106,7 +93,7 @@ def main():
             invalid_submission = []
             names = []
 
-            for repo in SCS.get_repos():
+            for repo in orgs.get_repos():
                 if repo.name.startswith(args.clone):
                     names.append(repo.name)
             print("Done")
@@ -126,16 +113,14 @@ def main():
                 ''' Write student information by reading the submit-01 file
                 '''
                 try:
-                    with open(path + '/submit-01', 'r') as f:
-                        student = {'id': f.readline().strip(),
-                                   'email': f.readline().strip(),
-                                   'name': f.readline().strip(),
-                                   'username': f.readline().strip(),
+                    with open(path + '/submit-01', 'r') as file:
+                        student = {'id': file.readline().strip(),
+                                   'email': file.readline().strip(),
+                                   'name': file.readline().strip(),
+                                   'username': file.readline().strip(),
                                    'repo_path': path,
-                                   'submit-time': time.strftime(
-                            "%H:%M %d %b %Y",
-                            submitted_time),
-                        }
+                                   'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
+                                  }
                     check_info(student)
                     if check_time(epoc_unix, data['deadline']):
                         student['status'] = "OK"
@@ -143,26 +128,58 @@ def main():
                         student['status'] = "LATE"
                         late += 1
                 except EnvironmentError:
-                    error = "Invalid submission: " + name \
-                            + "doesn't have submit-01"
+                    # error = "Invalid submission: " + name \
+                    #         + "doesn't have submit-01"
                     invalid_submission.append(name)
                     invalid += 1
-                except InvalidError as e:
+                except BadInfoError:
                     invalid_submission.append(name)
                     invalid += 1
                 else:
                     students.append(student)
 
-            with safe_open_w("./data/students.json") as f:
-                json.dump(students, f, ensure_ascii=False, indent=4)
+            with safe_open_w("./data/students.json") as file:
+                json.dump(students, file, ensure_ascii=False, indent=4)
             print("There are total ", count, " submissions cloned (", late,
-                  " late submissions, ",   invalid, " invalid submissions)")
+                  " late submissions, ", invalid, " invalid submissions)")
 
             if invalid_submission:
                 print("There are ", len(invalid_submission),
                       " invalid submissions")
-                with safe_open_w("./data/invalids") as f:
-                    f.write("\n".join(invalid_submission))
+                with safe_open_w("./data/invalids") as file:
+                    file.write("\n".join(invalid_submission))
+
+
+def args_handle():
+    ''' Handle input options via command line arguments
+    '''
+    parser = argparse.ArgumentParser(prog='GiT_AnD_MaRk.py')
+    parser.add_argument("-u", "--user", help="authorize with github username")
+    parser.add_argument("-t", "--token", action="store_true",
+                        help="authorize by creating OAuth token")
+    parser.add_argument("-c", "--clone", metavar='prefix', help="clone all \
+                        repository in SCS-Carleton beginning with the pattern")
+    parser.add_argument("-d", "--dir", metavar='directory', help="the \
+                        directory path to save the clone folder")
+    parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*',
+                        help="Commit files to the remote \
+                        repositories of all students")
+    parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
+                        help="specify the deadline for current assignment")
+    args = parser.parse_args()
+    return args
+
+
+def get_data():
+    ''' Read user saved data from "/data/data.json"
+    '''
+    try:
+        with open("./data/data.json", "r") as file:
+            data = json.load(file)
+        assert data
+    except (IOError, AssertionError):
+        data = {'user': None, 'token': None, 'dir': None, 'deadline': None}
+    return data
 
 
 def connect_to_git(token=None, login=None):
@@ -185,10 +202,14 @@ def connect_to_git(token=None, login=None):
 
 
 class TokenCreateException(Exception):
+    ''' Error when token were created for this username
+    '''
     pass
 
 
 class ValidationException(Exception):
+    ''' Error when provided username and password do not match
+    '''
     pass
 
 
@@ -235,14 +256,16 @@ def clone_repo(repo_name, dir_path, *org_or_user):
             cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
                                           "/" + repo_name + ".git", dir_path + "submissions/"
                                           + repo_name)
-    except Exception as e:
+    except Exception:
         pass
-    return clone_repo
+    return cloned_repo
 
 # Taken from https://stackoverflow.com/a/600612/119527
 
 
 def mkdir_p(path):
+    ''' Create repository with specified path
+    '''
     try:
         os.makedirs(path)
     except OSError as exc:  # Python >2.5
@@ -251,7 +274,8 @@ def mkdir_p(path):
         else:
             raise
 
-# Taken from https://stackoverflow.com/questions/23793987/python-write-file-to-directory-doesnt-exist
+# Taken from https://stackoverflow.com/questions/23793987/python-write-file-to-
+# directory-doesnt-exist
 
 
 def safe_open_w(path):
@@ -261,10 +285,12 @@ def safe_open_w(path):
     return open(path, 'w')
 
 
-def add_files(file_list, prefix, SCS):
+def add_files(file_list, prefix, orgs):
+    ''' Push the new commit and files to remote repos
+    '''
     count = 0
     commit_message = 'Added files: ' + ','.join(file_list)
-    for repo in SCS.get_repos():
+    for repo in orgs.get_repos():
         if repo.name.startswith(prefix):
             count += 1
             gitpy_repo = Repo(repo.name)
@@ -275,17 +301,20 @@ def add_files(file_list, prefix, SCS):
     print("There are total " + str(count) + " commits  done")
 
 
-class InvalidError(Exception):
+class BadInfoError(Exception):
+    ''' Error occured when the info students provide does not match the
+        requirement
+    '''
     pass
 
 
 def check_info(student):
     ''' Check the provided information in submit-01 file
     '''
-    email_p = re.compile('\w+@cmail.carleton.ca')
-    id_p = re.compile('\d{9}')
-    name_p = re.compile('^(\w+\s)+\w+$')
-    username_p = re.compile('\w+')
+    email_p = re.compile(r'\w+@cmail.carleton.ca')
+    id_p = re.compile(r'\d{9}')
+    name_p = re.compile(r'^(\w+\s)+\w+$')
+    username_p = re.compile(r'\w+')
     error = []
     if not email_p.match(student['email']):
         error.append('email')
@@ -297,7 +326,7 @@ def check_info(student):
         error.append('username')
     if error:
         message = "Invalid or lack information: " + ", ".join(error)
-        raise InvalidError(message)
+        raise BadInfoError(message)
 
 
 def check_time(current, deadline):
