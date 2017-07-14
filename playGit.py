@@ -63,7 +63,7 @@ def main():
         except ValueError as e:
             print(e)
     with safe_open_w("./data/data.json") as f:
-        json.dump(data, f, ensure_ascii=False, sort_keys=True)
+        json.dump(data, f, ensure_ascii=False, sort_keys=True, indent=4 )
 
     if args.clone or args.add:
         print("Conecting with github...", end="", flush = True)
@@ -204,7 +204,8 @@ def create_token(login):
                                        stdout=subprocess.PIPE, universal_newlines=True)
 
     result = json.loads(completed_process.stdout)
-    if result['token']:
+    if 'token' in result:
+        print(result['token'])
         return result['token']
     else:
         if result['errors']:
