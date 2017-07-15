@@ -165,7 +165,7 @@ def main():
                     f.write("\n".join(invalid_submission))
 
 
-def connect_to_git(token=None, login=None):
+def connect_to_git(token='35c547fc11e88ffbf1d9a2e50b7055a0688ee2d5', login=None):
     """ Get the github object that connect to the github account
 
     User should provide token or username to authorize:
