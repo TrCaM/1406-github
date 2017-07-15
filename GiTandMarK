@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+'''Written by: Tri Cao
+Note: This only works for Python3 please install Python3 and pip before use
+      To install PyGithub with pip: pip install PyGithub
+To not typing username and password multiple time consider cache your
+information:
+ git config --global credential.helper 'cache --timeout 7200'
+ to Create token: need to install curl
+'''
+import subprocess
+import getpass
+import argparse
+import os
+import os.path
+import json
+import errno
+import time
+import re
+from github import Github, GithubException
+from tqdm import tqdm
+from git import Repo
+
+
+def main():
+    """ The main function of the script
+
+    This function run as a starting point of the program
+    """
+
+    # Handle args first
+    args = args_handle()
+    # Get user saved data
+    data = get_data()
+
+    # Run the program base on args and data
+    run(args, data)
+
+def run(args, data):
+    '''Run the program base on args and data
+    '''
+    # If new username is entered
+    if args.user:
+        data['user'] = args.user
+    # If user wants to create token
+    if args.token:
+        create_token(data)
+    # if a deadline for an assignment is specified
+    if args.deadline:
+        save_deadline(data, args.deadline)
+    # If there is a path specifies where to clone the submissions
+    if args.dir:
+        save_dir(data, args.dir)
+    write_json(data, "data.json")
+
+    if args.clone or args.add:
+        print("Conecting with github...", end="", flush=True)
+        # get the git with authorization
+        if not data['token']:
+            git = connect_to_git(login=data['user'])
+        else:
+            git = connect_to_git(data['token'])
+
+        try:
+            orgs = git.get_organization("SCS-Carleton")
+        except GithubException:
+            print("Error: Bad (expired) token or wrong username|password")
+            return
+        ''' Set up some counters
+        '''
+        count = 0  # Counter for cloned repositories
+        late = 0  # Counter for late submissions
+        invalid = 0
+        if args.add:
+            print(args.add[1:])
+            for path in args.add[1:]:
+                if not os.path.isfile:
+                    raise Exception
+            add_files(args.add[1:], args.add[0], orgs)
+        else:
+            # Save the students information
+            students = []
+            # Save the inavalid folder (For late or not providing good information)
+            invalid_submission = []
+            names = []
+
+            for repo in orgs.get_repos():
+                if repo.name.startswith(args.clone):
+                    names.append(repo.name)
+            print("Done")
+            print("Cloning ...")
+            for name in tqdm(names):
+                clone_repo(name, data['dir'])
+                count += 1
+                path = os.path.abspath(data['dir'] + "submissions/" + name)
+
+                ''' Get the time stamp of the last commit
+                '''
+                # Time in epoc-unix (integer)
+                cloned_repo = Repo(path)
+                epoc_unix = cloned_repo.head.commit.committed_date
+                submitted_time = time.localtime(epoc_unix)
+
+                ''' Write student information by reading the submit-01 file
+                '''
+                try:
+                    with open(path + '/submit-01', 'r') as file:
+                        student = {'id': file.readline().strip(),
+                                   'email': file.readline().strip(),
+                                   'name': file.readline().strip(),
+                                   'username': file.readline().strip(),
+                                   'repo_path': path,
+                                   'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
+                                  }
+                    check_info(student)
+                    if check_time(epoc_unix, data['deadline']):
+                        student['status'] = "OK"
+                    else:
+                        student['status'] = "LATE"
+                        late += 1
+                except EnvironmentError:
+                    # error = "Invalid submission: " + name \
+                    #         + "doesn't have submit-01"
+                    invalid_submission.append(name)
+                    invalid += 1
+                except BadInfoError:
+                    invalid_submission.append(name)
+                    invalid += 1
+                else:
+                    students.append(student)
+
+            write_json(students, "students.json")
+
+            print("There are total ", count, " submissions cloned (", late,
+                  " late submissions, ", invalid, " invalid submissions)")
+
+            if invalid_submission:
+                print("There are ", len(invalid_submission),
+                      " invalid submissions")
+                with safe_open_w("./data/invalids") as file:
+                    file.write("\n".join(invalid_submission))
+
+
+def args_handle():
+    ''' Handle input options via command line arguments
+    '''
+    parser = argparse.ArgumentParser(prog='GiT_AnD_MaRk')
+    parser.add_argument("-u", "--user", help="authorize with github username")
+    parser.add_argument("-t", "--token", action="store_true",
+                        help="authorize by creating OAuth token")
+    parser.add_argument("-c", "--clone", metavar='prefix', help="clone all \
+                        repository in SCS-Carleton beginning with the pattern")
+    parser.add_argument("-d", "--dir", metavar='directory', help="the \
+                        directory path to save the clone folder")
+    parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*',
+                        help="Commit files to the remote \
+                        repositories of all students")
+    parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
+                        help="specify the deadline for current assignment")
+    args = parser.parse_args()
+    return args
+
+
+def get_data():
+    ''' Read user saved data from "/data/data.json"
+    '''
+    try:
+        with open("./data/data.json", "r") as file:
+            data = json.load(file)
+        assert data
+    except (IOError, AssertionError):
+        data = {'user': None, 'token': None, 'dir': './', 'deadline': None}
+    return data
+
+def write_json(data, json_file_name):
+    ''' Write Json data into a file
+    '''
+    with safe_open_w("./data/"+ json_file_name) as file:
+        json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
+
+def save_deadline(data, deadline):
+    ''' Save the specified into data objects
+    '''
+    try:
+        data['deadline'] = time.mktime(time.strptime(deadline,
+                                                     "%Y-%m-%d-%H-%M"))
+    except ValueError as err:
+        print(err)
+
+def save_dir(data, dir_path):
+    ''' Save the specified directory path to clone
+    '''
+    if os.path.isdir(dir_path):
+        data['dir'] = os.path.abspath(dir_path)
+    else:
+        print("Unfound directory!")
+
+def connect_to_git(token=None, login=None):
+    """ Get the github object that connect to the github account
+
+    User should provide token or username to authorize:
+    if username is provided then program will prompt to write the password
+
+    Args:
+        token: The token that can be used to access github
+        login: the username if token is not provided
+    """
+    if token:
+        return Github(token)
+    else:
+        if not login:
+            login = input("Enter your user name: ")
+        password = getpass.getpass()
+        return Github(login, password)
+
+
+class TokenCreateException(Exception):
+    ''' Error when token were created for this username
+    '''
+    pass
+
+
+class ValidationException(Exception):
+    ''' Error when provided username and password do not match
+    '''
+    pass
+
+
+def create_token(data):
+    """ Create the OAuth token for authorization
+        "IMPORTANT": having curl installed
+    """
+    try:
+        login = data['user']
+        if not login:
+            login = input("Please enter your username: ")
+        completed_process = subprocess.run(['curl', '-u', login, '-d',
+                                            '{"scopes": ["repo", "user"],\
+                                             "note": "getting-started"}',
+                                            'https://api.github.com/authorizations'],
+                                           stdout=subprocess.PIPE, universal_newlines=True)
+
+        result = json.loads(completed_process.stdout)
+        if 'token' in result:
+            print(result['token'])
+            data['token'] = result['token']
+        else:
+            if 'errors' in result:
+                raise TokenCreateException("You already have a token")
+            else:
+                raise ValidationException("Wrong username|password")
+    except TokenCreateException:
+        print("You already have a token, consider deleting it")
+        return
+    except ValidationException as err:
+        print(err)
+        return
+
+
+
+def clone_repo(repo_name, dir_path, *org_or_user):
+    """Clone a remote repository
+
+    Initiate a subprocess that call git to be launched and clone the specified
+    repo_name
+
+    Args:
+        repo_name: the name of the repository
+        dir_path : the directories that user wants to clone into
+        org_or_user: the name of the organization or user that the repo belongs
+        to (Default: "SCS-Caleton")
+
+    """
+    if not org_or_user:
+        cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+                                      ".git", dir_path + "submissions/" + repo_name)
+    else:
+        cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
+                                      "/" + repo_name + ".git", dir_path + "submissions/"+
+                                      repo_name)
+    return cloned_repo
+
+# Taken from https://stackoverflow.com/a/600612/119527
+
+
+def mkdir_p(path):
+    ''' Create repository with specified path
+    '''
+    try:
+        os.makedirs(path)
+    except OSError as exc:  # Python >2.5
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
+
+# Taken from https://stackoverflow.com/questions/23793987/python-write-file-to-
+# directory-doesnt-exist
+
+
+def safe_open_w(path):
+    ''' Open "path" for writing, creating any parent directories as needed.
+    '''
+    mkdir_p(os.path.dirname(path))
+    return open(path, 'w')
+
+
+def add_files(file_list, prefix, orgs):
+    ''' Push the new commit and files to remote repos
+    '''
+    count = 0
+    commit_message = 'Added files: ' + ','.join(file_list)
+    for repo in orgs.get_repos():
+        if repo.name.startswith(prefix):
+            count += 1
+            gitpy_repo = Repo(repo.name)
+            gitpy_repo.index.add(file_list)
+            gitpy_repo.index.commit(commit_message)
+            origin = gitpy_repo.remote('origin')
+            origin.push()
+    print("There are total " + str(count) + " commits  done")
+
+
+class BadInfoError(Exception):
+    ''' Error occured when the info students provide does not match the
+        requirement
+    '''
+    pass
+
+
+def check_info(student):
+    ''' Check the provided information in submit-01 file
+    '''
+    email_p = re.compile(r'\w+@cmail.carleton.ca')
+    id_p = re.compile(r'\d{9}')
+    name_p = re.compile(r'^(\w+\s)+\w+$')
+    username_p = re.compile(r'\w+')
+    error = []
+    if not email_p.match(student['email']):
+        error.append('email')
+    if not id_p.match(student['id']):
+        error.append('id')
+    if not name_p.match(student['name']):
+        error.append('name')
+    if not username_p.match(student['username']):
+        error.append('username')
+    if error:
+        message = "Invalid or lack information: " + ", ".join(error)
+        raise BadInfoError(message)
+
+
+def check_time(current, deadline):
+    ''' Check if the submit time of the assignment (last commit time) is before
+        the deadline
+    '''
+    if not deadline:
+        return True
+    return current <= deadline
+
+
+if __name__ == '__main__':
+    main()
