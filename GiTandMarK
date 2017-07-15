@@ -14,8 +14,8 @@ import os
 import os.path
 import json
 import errno
-import re
 import time
+import re
 from github import Github, GithubException
 from tqdm import tqdm
 from git import Repo
@@ -229,7 +229,7 @@ def create_token(login):
         print(result['token'])
         return result['token']
     else:
-        if result['errors']:
+        if 'error' in result:
             raise TokenCreateException("You already have a token")
         else:
             raise ValidationException("Wrong username|password")
