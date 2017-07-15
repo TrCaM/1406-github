@@ -32,25 +32,25 @@ def main():
     # Get user saved data
     data = get_data()
 
+    # Run the program base on args and data
+    run(args, data)
+
+def run(args, data):
+    '''Run the program base on args and data
+    '''
+    # If new username is entered
     if args.user:
         data['user'] = args.user
+    # If user wants to create token
     if args.token:
-        try:
-            data['token'] = create_token(data['user'])
-        except TokenCreateException:
-            print("You already have a token, consider deleting it")
-            return
-        except ValidationException as err:
-            print(err)
-            return
+        create_token(data)
+    # if a deadline for an assignment is specified
     if args.deadline:
-        try:
-            data['deadline'] = time.mktime(time.strptime(args.deadline,
-                                                         "%Y-%m-%d-%H-%M"))
-        except ValueError as err:
-            print(err)
-    with safe_open_w("./data/data.json") as file:
-        json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
+        save_deadline(data, args.deadline)
+    # If there is a path specifies where to clone the submissions
+    if args.dir:
+        save_dir(data, args.dir)
+    write_json(data, "data.json")
 
     if args.clone or args.add:
         print("Conecting with github...", end="", flush=True)
@@ -77,16 +77,6 @@ def main():
                     raise Exception
             add_files(args.add[1:], args.add[0], orgs)
         else:
-            if args.dir:
-                if os.path.isdir(args.dir):
-                    data['dir'] = os.path.abspath(args.dir)
-                else:
-                    raise Exception
-            else:
-                data['dir'] = './'
-            with safe_open_w("./data/data.json") as file:
-                json.dump(data, file, ensure_ascii=False)
-
             # Save the students information
             students = []
             # Save the inavalid folder (For late or not providing good information)
@@ -138,8 +128,8 @@ def main():
                 else:
                     students.append(student)
 
-            with safe_open_w("./data/students.json") as file:
-                json.dump(students, file, ensure_ascii=False, indent=4)
+            write_json(students, "students.json")
+
             print("There are total ", count, " submissions cloned (", late,
                   " late submissions, ", invalid, " invalid submissions)")
 
@@ -153,7 +143,7 @@ def main():
 def args_handle():
     ''' Handle input options via command line arguments
     '''
-    parser = argparse.ArgumentParser(prog='GiT_AnD_MaRk.py')
+    parser = argparse.ArgumentParser(prog='GiT_AnD_MaRk')
     parser.add_argument("-u", "--user", help="authorize with github username")
     parser.add_argument("-t", "--token", action="store_true",
                         help="authorize by creating OAuth token")
@@ -178,9 +168,31 @@ def get_data():
             data = json.load(file)
         assert data
     except (IOError, AssertionError):
-        data = {'user': None, 'token': None, 'dir': None, 'deadline': None}
+        data = {'user': None, 'token': None, 'dir': './', 'deadline': None}
     return data
 
+def write_json(data, json_file_name):
+    ''' Write Json data into a file
+    '''
+    with safe_open_w("./data/"+ json_file_name) as file:
+        json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
+
+def save_deadline(data, deadline):
+    ''' Save the specified into data objects
+    '''
+    try:
+        data['deadline'] = time.mktime(time.strptime(deadline,
+                                                     "%Y-%m-%d-%H-%M"))
+    except ValueError as err:
+        print(err)
+
+def save_dir(data, dir_path):
+    ''' Save the specified directory path to clone
+    '''
+    if os.path.isdir(dir_path):
+        data['dir'] = os.path.abspath(dir_path)
+    else:
+        print("Unfound directory!")
 
 def connect_to_git(token=None, login=None):
     """ Get the github object that connect to the github account
@@ -213,26 +225,36 @@ class ValidationException(Exception):
     pass
 
 
-def create_token(login):
+def create_token(data):
     """ Create the OAuth token for authorization
         "IMPORTANT": having curl installed
     """
-    if not login:
-        login = input("Please enter your username: ")
-    completed_process = subprocess.run(['curl', '-u', login, '-d',
-                                        '{"scopes": ["repo", "user"], "note": "getting-started"}',
-                                        'https://api.github.com/authorizations'],
-                                       stdout=subprocess.PIPE, universal_newlines=True)
+    try:
+        login = data['user']
+        if not login:
+            login = input("Please enter your username: ")
+        completed_process = subprocess.run(['curl', '-u', login, '-d',
+                                            '{"scopes": ["repo", "user"],\
+                                             "note": "getting-started"}',
+                                            'https://api.github.com/authorizations'],
+                                           stdout=subprocess.PIPE, universal_newlines=True)
 
-    result = json.loads(completed_process.stdout)
-    if 'token' in result:
-        print(result['token'])
-        return result['token']
-    else:
-        if 'error' in result:
-            raise TokenCreateException("You already have a token")
+        result = json.loads(completed_process.stdout)
+        if 'token' in result:
+            print(result['token'])
+            data['token'] = result['token']
         else:
-            raise ValidationException("Wrong username|password")
+            if 'errors' in result:
+                raise TokenCreateException("You already have a token")
+            else:
+                raise ValidationException("Wrong username|password")
+    except TokenCreateException:
+        print("You already have a token, consider deleting it")
+        return
+    except ValidationException as err:
+        print(err)
+        return
+
 
 
 def clone_repo(repo_name, dir_path, *org_or_user):
@@ -248,16 +270,13 @@ def clone_repo(repo_name, dir_path, *org_or_user):
         to (Default: "SCS-Caleton")
 
     """
-    try:
-        if not org_or_user:
-            cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
-                                          ".git", dir_path + "submissions/" + repo_name)
-        else:
-            cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
-                                          "/" + repo_name + ".git", dir_path + "submissions/"
-                                          + repo_name)
-    except Exception:
-        pass
+    if not org_or_user:
+        cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+                                      ".git", dir_path + "submissions/" + repo_name)
+    else:
+        cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
+                                      "/" + repo_name + ".git", dir_path + "submissions/"+
+                                      repo_name)
     return cloned_repo
 
 # Taken from https://stackoverflow.com/a/600612/119527
