@@ -7,6 +7,16 @@ information:
  git config --global credential.helper 'cache --timeout 7200'
  to Create token: need to install curl
 '''
+
+# BIG TODO: Use Docker to package???
+# TODO: Fix the OK/late/Bad
+# TODO: How to receive the marks from other TAs and combine
+# TODO: Deduct the mark base on the status
+# TODO: Generating CSV file to upload
+# TODO: Send feedback back to students' github repo
+
+# TODO: Mark with Tester, fully automated
+
 import subprocess
 import getpass
 import argparse
@@ -45,72 +55,6 @@ def run(args, data):
         operations[task](data, args)
 
     write_file(data, "data.json")
-
-    # if args.clone or args.add:
-    #     print("Conectin   g with github...", end="", flush=True)
-    #     # get the git with authorization
-    #     try:
-    #         orgs = connect_to_git(data).get_organization("SCS-Carleton")
-    #     except GithubException:
-    #         print("Error: Bad (expired) token or wrong username|password")
-    #         return
-    #     ''' Set up some counters
-    #     '''
-    #     stat = {'count': 0, 'late': 0, 'invalid': 0}
-    #
-    #     else:
-    #         # Save the students information
-    #         students = []
-    #         # Save the inavalid folder (For late or not providing good information)
-    #         invalid_submission = []
-    #         names = []
-    #
-    #         for repo in orgs.get_repos():
-    #             if repo.name.startswith(args.clone):
-    #                 names.append(repo.name)
-    #         print("Done")
-    #         print("Cloning ...")
-    #         for name in tqdm(names):
-    #             clone_repo(name, data['dir'])
-    #             stat['count'] += 1
-    #             path = os.path.abspath(data['dir'] + "submissions/" + name)
-    #
-    #             ''' Get the time stamp of the last commit
-    #             '''
-    #             # Time in epoc-unix (integer)
-    #             epoc_unix = Repo(path).head.commit.committed_date
-    #             submitted_time = time.localtime(epoc_unix)
-    #
-    #             ''' Write student information by reading the submit-01 file
-    #             '''
-    #             try:
-    #                 with open(path + '/submit-01', 'r') as file:
-    #                     student = {'id': file.readline().strip(),
-    #                                'email': file.readline().strip(),
-    #                                'name': file.readline().strip(),
-    #                                'username': file.readline().strip(),
-    #                                'repo_path': path,
-    #                                'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
-    #                               }
-    #                 check_info(student)
-    #                 student['status'] = "OK" if check_time(stat,
-    #                                                        epoc_unix,
-    #                                                        data['deadline']) else "LATE"
-    #
-    #             except (EnvironmentError, BadInfoError):
-    #                 # error = "Invalid submission: " + name \
-    #                 #         + "doesn't have submit-01"
-    #                 invalid_submission.append(name)
-    #                 stat['invalid'] += 1
-    #             else:
-    #                 students.append(student)
-    #
-    #         write_file(students, "students.json")
-    #
-    #         print("There are total ", stat['count'], " submissions cloned (", stat['late'],
-    #               " late submissions, ", stat['invalid'], " invalid submissions)")
-    #
-    #         write_file(invalid_submission, "invalids", is_json=False, is_array=True)
 
 
 def args_handle():
@@ -277,7 +221,7 @@ class ValidationException(Exception):
     '''
     pass
 
-
+# pylint: disable=W0613
 def create_token(data, *args):
     """ Create the OAuth token for authorization
         "IMPORTANT": having curl installed
