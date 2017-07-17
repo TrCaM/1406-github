@@ -16,6 +16,8 @@ import json
 import errno
 import time
 import re
+import sys
+from functools import wraps
 from github import Github, GithubException
 from tqdm import tqdm
 from git import Repo
@@ -23,121 +25,92 @@ from git import Repo
 
 def main():
     """ The main function of the script
-
-    This function run as a starting point of the program
+        This function run as a starting point of the program
     """
-
     # Handle args first
     args = args_handle()
     # Get user saved data
     data = get_data()
-
     # Run the program base on args and data
     run(args, data)
+
 
 def run(args, data):
     '''Run the program base on args and data
     '''
-    # If new username is entered
-    if args.user:
-        data['user'] = args.user
-    # If user wants to create token
-    if args.token:
-        create_token(data)
-    # if a deadline for an assignment is specified
-    if args.deadline:
-        save_deadline(data, args.deadline)
-    # If there is a path specifies where to clone the submissions
-    if args.dir:
-        save_dir(data, args.dir)
-    write_json(data, "data.json")
+    operations = {'user': set_user, 'token': create_token,
+                  'deadline': save_deadline, 'dir': save_dir,
+                  'clone': clone, 'add': add_files}
+    for task in list(filter(lambda key: getattr(args, key), args.__dict__.keys())):
+        operations[task](data, args)
 
-    if args.clone or args.add:
-        print("Conecting with github...", end="", flush=True)
-        # get the git with authorization
-        if not data['token']:
-            git = connect_to_git(login=data['user'])
-        else:
-            git = connect_to_git(data['token'])
+    write_file(data, "data.json")
 
-        try:
-            orgs = git.get_organization("SCS-Carleton")
-        except GithubException:
-            print("Error: Bad (expired) token or wrong username|password")
-            return
-        ''' Set up some counters
-        '''
-        count = 0  # Counter for cloned repositories
-        late = 0  # Counter for late submissions
-        invalid = 0
-        if args.add:
-            print(args.add[1:])
-            for path in args.add[1:]:
-                if not os.path.isfile:
-                    raise Exception
-            add_files(args.add[1:], args.add[0], orgs)
-        else:
-            # Save the students information
-            students = []
-            # Save the inavalid folder (For late or not providing good information)
-            invalid_submission = []
-            names = []
-
-            for repo in orgs.get_repos():
-                if repo.name.startswith(args.clone):
-                    names.append(repo.name)
-            print("Done")
-            print("Cloning ...")
-            for name in tqdm(names):
-                clone_repo(name, data['dir'])
-                count += 1
-                path = os.path.abspath(data['dir'] + "submissions/" + name)
-
-                ''' Get the time stamp of the last commit
-                '''
-                # Time in epoc-unix (integer)
-                cloned_repo = Repo(path)
-                epoc_unix = cloned_repo.head.commit.committed_date
-                submitted_time = time.localtime(epoc_unix)
-
-                ''' Write student information by reading the submit-01 file
-                '''
-                try:
-                    with open(path + '/submit-01', 'r') as file:
-                        student = {'id': file.readline().strip(),
-                                   'email': file.readline().strip(),
-                                   'name': file.readline().strip(),
-                                   'username': file.readline().strip(),
-                                   'repo_path': path,
-                                   'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
-                                  }
-                    check_info(student)
-                    if check_time(epoc_unix, data['deadline']):
-                        student['status'] = "OK"
-                    else:
-                        student['status'] = "LATE"
-                        late += 1
-                except EnvironmentError:
-                    # error = "Invalid submission: " + name \
-                    #         + "doesn't have submit-01"
-                    invalid_submission.append(name)
-                    invalid += 1
-                except BadInfoError:
-                    invalid_submission.append(name)
-                    invalid += 1
-                else:
-                    students.append(student)
-
-            write_json(students, "students.json")
-
-            print("There are total ", count, " submissions cloned (", late,
-                  " late submissions, ", invalid, " invalid submissions)")
-
-            if invalid_submission:
-                print("There are ", len(invalid_submission),
-                      " invalid submissions")
-                with safe_open_w("./data/invalids") as file:
-                    file.write("\n".join(invalid_submission))
+    # if args.clone or args.add:
+    #     print("Conectin   g with github...", end="", flush=True)
+    #     # get the git with authorization
+    #     try:
+    #         orgs = connect_to_git(data).get_organization("SCS-Carleton")
+    #     except GithubException:
+    #         print("Error: Bad (expired) token or wrong username|password")
+    #         return
+    #     ''' Set up some counters
+    #     '''
+    #     stat = {'count': 0, 'late': 0, 'invalid': 0}
+    #
+    #     else:
+    #         # Save the students information
+    #         students = []
+    #         # Save the inavalid folder (For late or not providing good information)
+    #         invalid_submission = []
+    #         names = []
+    #
+    #         for repo in orgs.get_repos():
+    #             if repo.name.startswith(args.clone):
+    #                 names.append(repo.name)
+    #         print("Done")
+    #         print("Cloning ...")
+    #         for name in tqdm(names):
+    #             clone_repo(name, data['dir'])
+    #             stat['count'] += 1
+    #             path = os.path.abspath(data['dir'] + "submissions/" + name)
+    #
+    #             ''' Get the time stamp of the last commit
+    #             '''
+    #             # Time in epoc-unix (integer)
+    #             epoc_unix = Repo(path).head.commit.committed_date
+    #             submitted_time = time.localtime(epoc_unix)
+    #
+    #             ''' Write student information by reading the submit-01 file
+    #             '''
+    #             try:
+    #                 with open(path + '/submit-01', 'r') as file:
+    #                     student = {'id': file.readline().strip(),
+    #                                'email': file.readline().strip(),
+    #                                'name': file.readline().strip(),
+    #                                'username': file.readline().strip(),
+    #                                'repo_path': path,
+    #                                'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
+    #                               }
+    #                 check_info(student)
+    #                 student['status'] = "OK" if check_time(stat,
+    #                                                        epoc_unix,
+    #                                                        data['deadline']) else "LATE"
+    #
+    #             except (EnvironmentError, BadInfoError):
+    #                 # error = "Invalid submission: " + name \
+    #                 #         + "doesn't have submit-01"
+    #                 invalid_submission.append(name)
+    #                 stat['invalid'] += 1
+    #             else:
+    #                 students.append(student)
+    #
+    #         write_file(students, "students.json")
+    #
+    #         print("There are total ", stat['count'], " submissions cloned (", stat['late'],
+    #               " late submissions, ", stat['invalid'], " invalid submissions)")
+    #
+    #         write_file(invalid_submission, "invalids", is_json=False, is_array=True)
 
 
 def args_handle():
@@ -168,49 +141,129 @@ def get_data():
             data = json.load(file)
         assert data
     except (IOError, AssertionError):
-        data = {'user': None, 'token': None, 'dir': './', 'deadline': None}
+        data = {'user': None, 'token': None, 'dir': './', 'deadline': None, 'commits' : 0}
     return data
 
-def write_json(data, json_file_name):
+
+def write_file(data, file_name, is_json=True, is_array=False):
     ''' Write Json data into a file
     '''
-    with safe_open_w("./data/"+ json_file_name) as file:
-        json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
+    with safe_open_w("./data/" + file_name) as file:
+        if is_json:
+            json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
+        elif is_array:
+            file.write("\n".join(data))
 
-def save_deadline(data, deadline):
+
+def set_user(data, args):
+    ''' Set the user if provided
+    '''
+    data['user'] = args.user
+
+
+def save_deadline(data, args):
     ''' Save the specified into data objects
     '''
     try:
-        data['deadline'] = time.mktime(time.strptime(deadline,
+        data['deadline'] = time.mktime(time.strptime(args.deadline,
                                                      "%Y-%m-%d-%H-%M"))
     except ValueError as err:
         print(err)
 
-def save_dir(data, dir_path):
+
+def save_dir(data, args):
     ''' Save the specified directory path to clone
     '''
+    dir_path = args.dir
     if os.path.isdir(dir_path):
         data['dir'] = os.path.abspath(dir_path)
     else:
         print("Unfound directory!")
 
-def connect_to_git(token=None, login=None):
+
+def authorize_user(func):
     """ Get the github object that connect to the github account
 
     User should provide token or username to authorize:
     if username is provided then program will prompt to write the password
-
-    Args:
-        token: The token that can be used to access github
-        login: the username if token is not provided
     """
-    if token:
-        return Github(token)
-    else:
-        if not login:
-            login = input("Enter your user name: ")
-        password = getpass.getpass()
-        return Github(login, password)
+    # get the git with authorization
+    @wraps(func)
+    def wrapper(data, args):
+        ''' The wrapper that helps authorize github user
+        '''
+        print("Conecting with github...", end="", flush=True)
+        if data['token']:
+            git = Github(data['token'])
+        else:
+            login = data['user'] if data['user'] else input(
+                "Enter your user name: ")
+            password = getpass.getpass()
+            git = Github(login, password)
+        try:
+            orgs = git.get_organization("SCS-Carleton")
+            print("Athorized")
+            return func(orgs, data, args)
+        except GithubException:
+            print("Error: Bad (expired) token or wrong username|password")
+            sys.exit()
+    return wrapper
+
+
+@authorize_user
+def clone(orgs, data, args):
+    ''' Set up some counters
+    '''
+    stat = {'count': 0, 'late': 0, 'invalid': 0}
+    # Save the students information
+    students = []
+    # Save the inavalid folder (For late or not providing good information)
+    invalid_submission = []
+    names = []
+    print("Getting repositories...", end="", flush=True)
+    for repo in orgs.get_repos():
+        if repo.name.startswith(args.clone):
+            names.append(repo.name)
+    print("DONE")
+    print("Cloning ...")
+    for name in tqdm(names):
+        clone_repo(name, data['dir'])
+        stat['count'] += 1
+        path = os.path.abspath(data['dir'] + "submissions/" + name)
+
+        ''' Get the time stamp of the last commit
+        '''
+        # Time in epoc-unix (integer)
+        epoc_unix = Repo(path).head.commit.committed_date
+        submitted_time = time.localtime(epoc_unix)
+
+        ''' Write student information by reading the submit-01 file
+        '''
+        try:
+            with open(path + '/submit-01', 'r') as file:
+                student = {'id': file.readline().strip(),
+                           'email': file.readline().strip(),
+                           'name': file.readline().strip(),
+                           'username': file.readline().strip(),
+                           'repo_path': path,
+                           'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
+                          }
+            check_info(student)
+            student['status'] = "OK" if check_time(stat,
+                                                   epoc_unix,
+                                                   data['deadline']) else "LATE"
+        except (EnvironmentError, BadInfoError):
+            invalid_submission.append(name)
+            stat['invalid'] += 1
+        else:
+            students.append(student)
+
+    write_file(students, "students.json")
+
+    print("There are total ", stat['count'], " submissions cloned (", stat['late'],
+          " late submissions, ", stat['invalid'], " invalid submissions)")
+
+    write_file(invalid_submission, "invalids", is_json=False, is_array=True)
 
 
 class TokenCreateException(Exception):
@@ -225,7 +278,7 @@ class ValidationException(Exception):
     pass
 
 
-def create_token(data):
+def create_token(data, *args):
     """ Create the OAuth token for authorization
         "IMPORTANT": having curl installed
     """
@@ -256,7 +309,6 @@ def create_token(data):
         return
 
 
-
 def clone_repo(repo_name, dir_path, *org_or_user):
     """Clone a remote repository
 
@@ -275,7 +327,7 @@ def clone_repo(repo_name, dir_path, *org_or_user):
                                       ".git", dir_path + "submissions/" + repo_name)
     else:
         cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
-                                      "/" + repo_name + ".git", dir_path + "submissions/"+
+                                      "/" + repo_name + ".git", dir_path + "submissions/" +
                                       repo_name)
     return cloned_repo
 
@@ -304,21 +356,24 @@ def safe_open_w(path):
     return open(path, 'w')
 
 
-def add_files(file_list, prefix, orgs):
+@authorize_user
+def add_files(orgs, data, args):
     ''' Push the new commit and files to remote repos
     '''
+    file_list = list(filter(os.path.isfile, args.add[1:]))
+    prefix = args.add[0]
     count = 0
     commit_message = 'Added files: ' + ','.join(file_list)
     for repo in orgs.get_repos():
         if repo.name.startswith(prefix):
             count += 1
-            gitpy_repo = Repo(repo.name)
+            gitpy_repo = Repo("./submissions/" +repo.name)
             gitpy_repo.index.add(file_list)
             gitpy_repo.index.commit(commit_message)
             origin = gitpy_repo.remote('origin')
             origin.push()
     print("There are total " + str(count) + " commits  done")
-
+    data['commits'] += count
 
 class BadInfoError(Exception):
     ''' Error occured when the info students provide does not match the
@@ -348,13 +403,14 @@ def check_info(student):
         raise BadInfoError(message)
 
 
-def check_time(current, deadline):
+def check_time(stat, current, deadline):
     ''' Check if the submit time of the assignment (last commit time) is before
         the deadline
     '''
-    if not deadline:
+    if not deadline or current <= deadline:
         return True
-    return current <= deadline
+    stat['late'] += 1
+    return False
 
 
 if __name__ == '__main__':
