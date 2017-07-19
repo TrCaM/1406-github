@@ -50,7 +50,7 @@ def run(args, data):
     '''
     operations = {'user': set_user, 'token': create_token,
                   'deadline': save_deadline, 'dir': save_dir,
-                  'clone': clone, 'add': add_files}
+                  'clone': clone, 'add': add_files, 'info': show_data}
     for task in list(filter(lambda key: getattr(args, key), args.__dict__.keys())):
         operations[task](data, args)
 
@@ -73,6 +73,7 @@ def args_handle():
                         repositories of all students")
     parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
                         help="specify the deadline for current assignment")
+    parser.add_argument("-i", "--info", action="store_true", help="Show some information")
     args = parser.parse_args()
     return args
 
@@ -160,9 +161,7 @@ def clone(orgs, data, args):
     '''
     stat = {'count': 0, 'late': 0, 'invalid': 0}
     # Save the students information
-    students = []
-    # Save the inavalid folder (For late or not providing good information)
-    invalid_submission = []
+    students = {}
     names = []
     print("Getting repositories...", end="", flush=True)
     for repo in orgs.get_repos():
@@ -185,6 +184,7 @@ def clone(orgs, data, args):
         '''
         try:
             with open(path + '/submit-01', 'r') as file:
+                username = re.search(r'\w+$', name).group(0)
                 student = {'id': file.readline().strip(),
                            'email': file.readline().strip(),
                            'name': file.readline().strip(),
@@ -196,18 +196,24 @@ def clone(orgs, data, args):
             student['status'] = "OK" if check_time(stat,
                                                    epoc_unix,
                                                    data['deadline']) else "LATE"
+
         except (EnvironmentError, BadInfoError):
-            invalid_submission.append(name)
+            student['status'] = "BAD"
             stat['invalid'] += 1
-        else:
-            students.append(student)
+
+        add_information_to_rubric(student, "rubric-01.md")
+
+        if student['status'] != "OK":
+            student['repo_path'] = path + "-" + student['status']
+            os.rename(path, student['repo_path'])
+
+        students[username] = student
+
 
     write_file(students, "students.json")
 
     print("There are total ", stat['count'], " submissions cloned (", stat['late'],
           " late submissions, ", stat['invalid'], " invalid submissions)")
-
-    write_file(invalid_submission, "invalids", is_json=False, is_array=True)
 
 
 class TokenCreateException(Exception):
@@ -266,14 +272,17 @@ def clone_repo(repo_name, dir_path, *org_or_user):
         to (Default: "SCS-Caleton")
 
     """
-    if not org_or_user:
-        cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
-                                      ".git", dir_path + "submissions/" + repo_name)
-    else:
-        cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
-                                      "/" + repo_name + ".git", dir_path + "submissions/" +
-                                      repo_name)
-    return cloned_repo
+    path = dir_path + '/submissions/' + repo_name
+    if not os.path.isdir(path):
+        if not org_or_user:
+            cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+                                          ".git", path)
+        else:
+            cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
+                                          "/" + repo_name + ".git", path)
+        return cloned_repo
+    return Repo(dir_path + "submissions/" + repo_name)
+
 
 # Taken from https://stackoverflow.com/a/600612/119527
 
@@ -356,6 +365,37 @@ def check_time(stat, current, deadline):
     stat['late'] += 1
     return False
 
+# pylint: disable=W0613
+def show_data(data, *args):
+    ''' Show the data stored
+    '''
+    print(json.dumps((data), indent=4))
+
+
+def create_remote_branch(repo, name):
+    pass
+
+
+def comment_wrap(message):
+    ''' Put wrap the message with comment pattern in markdown file
+    '''
+    return "<!-- " + message + " -->"
+
+
+def add_information_to_rubric(student, rubric_file_name):
+    ''' Add the student's information to the rubric file
+
+    This help for collecting the marks after marking done
+    '''
+    message = "{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
+                                    comment_wrap(student['id']),
+                                    comment_wrap(student['username']))
+    try:
+        with open(student['repo_path']+ '/' +rubric_file_name, 'r+') as file:
+            file.write(message)
+    except FileNotFoundError:
+        print("Unable to find the file!")
+        raise
 
 if __name__ == '__main__':
     main()
