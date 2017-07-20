@@ -183,6 +183,7 @@ def clone(orgs, data, args):
     # Save the students information
     students = {}
     names = []
+    invalids = []
     print("Getting repositories...", end="", flush=True)
     for repo in orgs.get_repos():
         if repo.name.startswith(args.clone):
@@ -201,7 +202,7 @@ def clone(orgs, data, args):
         # Time in epoc-unix (integer)
         epoc_unix = Repo(path).head.commit.committed_date
         submitted_time = time.localtime(epoc_unix)
-
+        student = {}
         ''' Write student information by reading the submit-01 file
         '''
         try:
@@ -219,23 +220,27 @@ def clone(orgs, data, args):
                                                    epoc_unix,
                                                    data['deadline']) else "LATE"
             username = student['username']
+            add_information_to_rubric(username, student, "rubric-01.md")
+        except FileNotFoundError:
+            invalids.append(name)
         except (EnvironmentError, BadInfoError):
             student['status'] = "BAD"
             stat['invalid'] += 1
+            add_information_to_rubric(username, student, "rubric-01.md")
 
-        add_information_to_rubric(username, student, "rubric-01.md")
 
-        if student['status'] != "OK":
-            student['repo_path'] = path + "-" + student['status']
-            os.rename(path, student['repo_path'])
-
-        students[username] = student
+        if student:
+            if student['status'] != "OK":
+                student['repo_path'] = path + "-" + student['status']
+                os.rename(path, student['repo_path'])
+            students[username] = student
 
     write_file(out_dir, students, "students.json")
 
     print("There are total ", stat['count'], " submissions cloned (", stat['late'],
           " late submissions, ", stat['invalid'], " invalid submissions)")
-
+    print("There are", len(invalids), " unknown submissions:")
+    print("\n".join(invalids))
 
 class TokenCreateException(Exception):
     ''' Error when token were created for this username
