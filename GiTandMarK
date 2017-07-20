@@ -9,7 +9,6 @@ information:
 '''
 
 # BIG TODO: Use Docker to package???
-# TODO: Fix the OK/late/Bad
 # TODO: How to receive the marks from other TAs and combine
 # TODO: Deduct the mark base on the status
 # TODO: Generating CSV file to upload
@@ -154,6 +153,23 @@ def authorize_user(func):
             sys.exit()
     return wrapper
 
+def make_dir(out_path):
+    ''' Smart making the output folder
+    '''
+    try:
+        os.makedirs(out_path)
+
+    except FileExistsError:
+        count = 1
+        while True:
+            try:
+                out_path = "%s-%d" % (out_path, count)
+                os.makedirs(out_path)
+                break
+            except FileExistsError:
+                count += 1
+                continue
+    return out_path
 
 @authorize_user
 def clone(orgs, data, args):
@@ -169,10 +185,12 @@ def clone(orgs, data, args):
             names.append(repo.name)
     print("DONE")
     print("Cloning ...")
+    out_dir = make_dir(data['dir'] + "submissions")
     for name in tqdm(names):
         clone_repo(name, data['dir'])
         stat['count'] += 1
-        path = os.path.abspath(data['dir'] + "submissions/" + name)
+
+        path = os.path.abspath("%s/%s" % (out_dir, name))
 
         ''' Get the time stamp of the last commit
         '''
@@ -184,7 +202,7 @@ def clone(orgs, data, args):
         '''
         try:
             with open(path + '/submit-01', 'r') as file:
-                username = re.search(r'\w+$', name).group(0)
+                username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
                 student = {'id': file.readline().strip(),
                            'email': file.readline().strip(),
                            'name': file.readline().strip(),
@@ -196,16 +214,17 @@ def clone(orgs, data, args):
             student['status'] = "OK" if check_time(stat,
                                                    epoc_unix,
                                                    data['deadline']) else "LATE"
-
+            username = student['username']
         except (EnvironmentError, BadInfoError):
             student['status'] = "BAD"
             stat['invalid'] += 1
 
-        add_information_to_rubric(student, "rubric-01.md")
+        add_information_to_rubric(username, student, "rubric-01.md")
 
         if student['status'] != "OK":
             student['repo_path'] = path + "-" + student['status']
             os.rename(path, student['repo_path'])
+
 
         students[username] = student
 
@@ -382,14 +401,14 @@ def comment_wrap(message):
     return "<!-- " + message + " -->"
 
 
-def add_information_to_rubric(student, rubric_file_name):
+def add_information_to_rubric(username,student, rubric_file_name):
     ''' Add the student's information to the rubric file
 
     This help for collecting the marks after marking done
     '''
     message = "{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
                                     comment_wrap(student['id']),
-                                    comment_wrap(student['username']))
+                                    comment_wrap(username))
     try:
         with open(student['repo_path']+ '/' +rubric_file_name, 'r+') as file:
             file.write(message)

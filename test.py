@@ -417,7 +417,9 @@ def main():
         This function run as a starting point of the program
     """
     # Handle args first
-    test_repo()
+    import export
+
+    export.export("./submissions", "./", "rubric-01.md")
 
 if __name__ == '__main__':
     main()
