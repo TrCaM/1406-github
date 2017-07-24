@@ -7,9 +7,22 @@ import argparse
 import shutil
 from tqdm import tqdm
 
+'''
 def main():
-    ''' The main function to run the script
-    '''
+    # The main function to run the script
+    
+    try:
+        args = args_handle()
+
+    except NotADirectoryError as err:
+        print(err)
+        return
+
+    export(args.path, args.out, args.file)
+'''
+
+def export_result():
+    
     try:
         args = args_handle()
 
@@ -75,5 +88,7 @@ def make_dir(out_path):
                 continue
     return out
 
+'''
 if __name__ == "__main__":
     main()
+'''
