@@ -11,7 +11,7 @@ setup(name='gitclassroom',
       ],
       url='https://github.com/TrCaM/1406-github',
       author='Tri Cao',
-      author_email='',
+      author_email='cmthscb@gmail.com',
       license='MIT',
       packages=['gclr'],
       install_requires=[
