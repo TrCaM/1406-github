@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 '''Written by: Tri Cao
+   Contributed by: Trung Dinh
 Note: This only works for Python3 please install Python3 and pip before use
       To install PyGithub with pip: pip install PyGithub
 To not typing username and password multiple time consider cache your
@@ -9,7 +10,6 @@ information:
 '''
 
 # BIG TODO: Use Docker to package???
-# TODO: Fix the OK/late/Bad
 # TODO: How to receive the marks from other TAs and combine
 # TODO: Deduct the mark base on the status
 # TODO: Generating CSV file to upload
@@ -32,20 +32,38 @@ from github import Github, GithubException
 from tqdm import tqdm
 from git import Repo
 
+'''
+def main():
+    """ The main function of the script
+        This function run as a starting point of the program
+    """
+    # Handle args first
+    args = args_handle()
+    # Get user saved data
+    data = get_data()
+    # Run the program base on args and data
+    run(args, data)
+'''
 
-
-
+def get_assignment():
+    
+    # Handle args first
+    args = args_handle()
+    # Get user saved data
+    data = get_data()
+    # Run the program base on args and data
+    run(args, data)
 
 def run(args, data):
     '''Run the program base on args and data
     '''
     operations = {'user': set_user, 'token': create_token,
                   'deadline': save_deadline, 'dir': save_dir,
-                  'clone': clone, 'add': add_files}
+                  'clone': clone, 'add': add_files, 'info': show_data}
     for task in list(filter(lambda key: getattr(args, key), args.__dict__.keys())):
         operations[task](data, args)
 
-    write_file(data, "data.json")
+    write_file("./data", data, "data.json")
 
 
 def args_handle():
@@ -64,6 +82,8 @@ def args_handle():
                         repositories of all students")
     parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
                         help="specify the deadline for current assignment")
+    parser.add_argument("-i", "--info", action="store_true",
+                        help="Show some information")
     args = parser.parse_args()
     return args
 
@@ -76,14 +96,15 @@ def get_data():
             data = json.load(file)
         assert data
     except (IOError, AssertionError):
-        data = {'user': None, 'token': None, 'dir': './', 'deadline': None, 'commits' : 0}
+        data = {'user': None, 'token': None,
+                'dir': './', 'deadline': None, 'commits': 0}
     return data
 
 
-def write_file(data, file_name, is_json=True, is_array=False):
+def write_file(out_dir, data, file_name, is_json=True, is_array=False):
     ''' Write Json data into a file
     '''
-    with safe_open_w("./data/" + file_name) as file:
+    with safe_open_w("%s/%s" % (out_dir, file_name)) as file:
         if is_json:
             json.dump(data, file, ensure_ascii=False, sort_keys=True, indent=4)
         elif is_array:
@@ -145,37 +166,58 @@ def authorize_user(func):
     return wrapper
 
 
+def make_dir(out_path):
+    ''' Smart making the output folder
+    '''
+    try:
+        os.makedirs(out_path)
+        out = out_path
+    except FileExistsError:
+        count = 1
+        while True:
+            try:
+                out = "%s-%d" % (out_path, count)
+                os.makedirs(out)
+                break
+            except FileExistsError:
+                count += 1
+                continue
+    return out
+
+
 @authorize_user
 def clone(orgs, data, args):
     ''' Set up some counters
     '''
     stat = {'count': 0, 'late': 0, 'invalid': 0}
     # Save the students information
-    students = []
-    # Save the inavalid folder (For late or not providing good information)
-    invalid_submission = []
+    students = {}
     names = []
+    invalids = []
     print("Getting repositories...", end="", flush=True)
     for repo in orgs.get_repos():
         if repo.name.startswith(args.clone):
             names.append(repo.name)
     print("DONE")
     print("Cloning ...")
+    out_dir = make_dir(data['dir'] + "submissions")
     for name in tqdm(names):
-        clone_repo(name, data['dir'])
+        clone_repo(name, out_dir)
         stat['count'] += 1
-        path = os.path.abspath(data['dir'] + "submissions/" + name)
+
+        path = os.path.abspath("%s/%s" % (out_dir, name))
 
         ''' Get the time stamp of the last commit
         '''
         # Time in epoc-unix (integer)
         epoc_unix = Repo(path).head.commit.committed_date
         submitted_time = time.localtime(epoc_unix)
-
+        student = {}
         ''' Write student information by reading the submit-01 file
         '''
         try:
             with open(path + '/submit-01', 'r') as file:
+                username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
                 student = {'id': file.readline().strip(),
                            'email': file.readline().strip(),
                            'name': file.readline().strip(),
@@ -187,19 +229,28 @@ def clone(orgs, data, args):
             student['status'] = "OK" if check_time(stat,
                                                    epoc_unix,
                                                    data['deadline']) else "LATE"
+            username = student['username']
+            add_information_to_rubric(username, student, "rubric-01.md")
+        except FileNotFoundError:
+            invalids.append(name)
         except (EnvironmentError, BadInfoError):
-            invalid_submission.append(name)
+            student['status'] = "BAD"
             stat['invalid'] += 1
-        else:
-            students.append(student)
+            add_information_to_rubric(username, student, "rubric-01.md")
 
-    write_file(students, "students.json")
+
+        if student:
+            if student['status'] != "OK":
+                student['repo_path'] = path + "-" + student['status']
+                os.rename(path, student['repo_path'])
+            students[username] = student
+
+    write_file(out_dir, students, "students.json")
 
     print("There are total ", stat['count'], " submissions cloned (", stat['late'],
           " late submissions, ", stat['invalid'], " invalid submissions)")
-
-    write_file(invalid_submission, "invalids", is_json=False, is_array=True)
-
+    print("There are", len(invalids), " unknown submissions:")
+    print("\n".join(invalids))
 
 class TokenCreateException(Exception):
     ''' Error when token were created for this username
@@ -213,6 +264,8 @@ class ValidationException(Exception):
     pass
 
 # pylint: disable=W0613
+
+
 def create_token(data, *args):
     """ Create the OAuth token for authorization
         "IMPORTANT": having curl installed
@@ -257,7 +310,7 @@ def clone_repo(repo_name, dir_path, *org_or_user):
         to (Default: "SCS-Caleton")
 
     """
-    path = dir_path + "submissions/" + repo_name
+    path = "%s/%s" % (dir_path, repo_name)
     if not os.path.isdir(path):
         if not org_or_user:
             cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
@@ -266,7 +319,7 @@ def clone_repo(repo_name, dir_path, *org_or_user):
             cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
                                           "/" + repo_name + ".git", path)
         return cloned_repo
-    return Repo(dir_path + "submissions/" + repo_name)
+    return Repo(path)
 
 
 # Taken from https://stackoverflow.com/a/600612/119527
@@ -305,13 +358,14 @@ def add_files(orgs, data, args):
     for repo in orgs.get_repos():
         if repo.name.startswith(prefix):
             count += 1
-            gitpy_repo = Repo("./submissions/" +repo.name)
+            gitpy_repo = Repo("./submissions/" + repo.name)
             gitpy_repo.index.add(file_list)
             gitpy_repo.index.commit(commit_message)
             origin = gitpy_repo.remote('origin')
             origin.push()
     print("There are total " + str(count) + " commits  done")
     data['commits'] += count
+
 
 class BadInfoError(Exception):
     ''' Error occured when the info students provide does not match the
@@ -350,76 +404,41 @@ def check_time(stat, current, deadline):
     stat['late'] += 1
     return False
 
+# pylint: disable=W0613
 
 
-
-@authorize_user
-def send_feedback(orgs, data, args):
-    ''' Send the graded rubik to students remote repo
-
-    - TODO Create new "graded" branch
-    - TODO Delete readme, change rubik into readme
-    - Get the zip folders from TAs
-    - unzip (can do it)
-    -
-
+def show_data(data, *args):
+    ''' Show the data stored
     '''
+    print(json.dumps((data), indent=4))
 
 
+def create_remote_branch(repo, name):
+    pass
 
-def get_sha(repo, branch_name):
-    ''' Get the sha from a branch
 
-    Purpose: to create a new branch from this revision
+def comment_wrap(message):
+    ''' Put wrap the message with comment pattern in markdown file
     '''
+    return "<!-- " + message + " -->"
+
+
+def add_information_to_rubric(username, student, rubric_file_name):
+    ''' Add the student's information to the rubric file
+
+    This help for collecting the marks after marking done
+    '''
+    message = "{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
+                                    comment_wrap(student['id']),
+                                    comment_wrap(username))
     try:
-        ref_object = repo.get_git_ref("heads/" + branch_name).object
-    except GithubException:
-        print("There is no such branch: ", branch_name)
+        with open(student['repo_path'] + '/' + rubric_file_name, 'r+') as file:
+            file.write(message)
+    except FileNotFoundError:
+        print("Unable to find the file!")
         raise
 
-    return ref_object.sha
-
-def create_remote_branch(repo, name, sha):
-    ''' Create a new remote branch of a Repo
-    '''
-    try:
-        repo.create_git_ref("refs/heads/" + name, sha)
-    except GithubException as err:
-        print("Wrong SHA")
-        raise
-
-def delete_remote_branch(repo, branch_name):
-    ''' Delete a remote branch
-    '''
-    try:
-        repo.get_git_ref("heads/" + branch_name).delete()
-    except GithubException:
-        print("There is no such branch: ", branch_name)
-
-def test_repo():
-    git = Github("7e4dfad03d12ffd826ccf76fe6445c1c9ce87232")
-    orgs = git.get_organization("SCS-Carleton")
-    repo = orgs.get_repo("a1-test-TrCaM")
-    # sha = get_sha(repo, "master")
-    # delete_remote_branch(repo, "graged")
-    # repo.create_git_ref("refs/heads/graded", sha)
-    content = repo.get_readme()
-    import base64
-    print(base64.b64decode(content.content))
-
-    # with open("./demo.md", "wb") as file:
-        # file.write(base64.decodestring(content.content))
-
-
-def main():
-    """ The main function of the script
-        This function run as a starting point of the program
-    """
-    # Handle args first
-    import export
-
-    export.export("./submissions", "./", "rubric-01.md")
-
+'''
 if __name__ == '__main__':
     main()
+'''
