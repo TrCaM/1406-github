@@ -26,16 +26,18 @@ import errno
 import time
 import re
 import sys
+import logging
 from functools import wraps
 from github import Github, GithubException
 from tqdm import tqdm
-from git import Repo
+from git import Repo, GitCommandError
 
 
 def main():
     """ The main function of the script
         This function run as a starting point of the program
     """
+    logging.basicConfig(filename="tracking.log", filemode='w',level=logging.INFO)
     # Handle args first
     args = args_handle()
     # Get user saved data
@@ -49,7 +51,8 @@ def run(args, data):
     '''
     operations = {'user': set_user, 'token': create_token,
                   'deadline': save_deadline, 'dir': save_dir,
-                  'clone': clone, 'add': add_files, 'info': show_data}
+                  'clone': clone, 'add': add_files, 'info': show_data,
+                  'submit': save_submit_file, 'rubric': save_rubric_file}
     for task in list(filter(lambda key: getattr(args, key), args.__dict__.keys())):
         operations[task](data, args)
 
@@ -74,6 +77,9 @@ def args_handle():
                         help="specify the deadline for current assignment")
     parser.add_argument("-i", "--info", action="store_true",
                         help="Show some information")
+    parser.add_argument("-s", '--submit', metavar='student information file',
+                        nargs='+', help='The file that stores students information')
+    parser.add_argument('-r', '--rubric', help='The rubric file name')
     args = parser.parse_args()
     return args
 
@@ -86,8 +92,8 @@ def get_data():
             data = json.load(file)
         assert data
     except (IOError, AssertionError):
-        data = {'user': None, 'token': None,
-                'dir': './', 'deadline': None, 'commits': 0}
+        data = {'user': None, 'token': None, 'dir': './', 'deadline': None,
+                'commits': 0, 'submit_file': [], 'rubric_file': None}
     return data
 
 
@@ -125,6 +131,18 @@ def save_dir(data, args):
         data['dir'] = os.path.abspath(dir_path)
     else:
         print("Unfound directory!")
+
+
+def save_submit_file(data, args):
+    ''' Get the file name that stores students' information
+    '''
+    data['submit_file'] = args.submit
+
+
+def save_rubric_file(data, args):
+    ''' Get the file name that stores the rubric of the submissions
+    '''
+    data['rubric_file'] = args.rubric
 
 
 def authorize_user(func):
@@ -176,19 +194,23 @@ def make_dir(out_path):
 
 
 @authorize_user
+# pylint: disable= R0914, R0915
 def clone(orgs, data, args):
     ''' Set up some counters
     '''
-    stat = {'count': 0, 'late': 0, 'invalid': 0}
-    # Save the students information
-    students = {}
     names = []
-    invalids = []
+    info = Info()
     print("Getting repositories...", end="", flush=True)
     for repo in orgs.get_repos():
         if repo.name.startswith(args.clone):
             names.append(repo.name)
     print("DONE")
+
+    submit_files = data['submit_file'] if data['submit_file'] else input(
+        "Please enter valid submit files: ").split(" ")
+    rubric_file = data['rubric_file'] if data['rubric_file'] else input(
+        "Please enter rubric file: ")
+
     print("Cloning ...")
     out_dir = make_dir(data['dir'] + "submissions")
     for name in tqdm(names):
@@ -205,10 +227,10 @@ def clone(orgs, data, args):
                     error = True
                 continue
         if error:
-            invalids.append(name)
+            info.unknowns.append(name)
             continue
 
-        stat['count'] += 1
+        info.count += 1
 
         path = os.path.abspath("%s/%s" % (out_dir, name))
 
@@ -221,9 +243,10 @@ def clone(orgs, data, args):
         ''' Write student information by reading the submit-01 file
         '''
         try:
-            submit_path = path + '/submit-01'
-            if not os.path.isfile(submit_path):
-                submit_path = submit_path + ".txt"
+            for submit_file in submit_files:
+                submit_path = "%s/%s" % (path, submit_file)
+                if os.path.isfile(submit_path):
+                    break
             with open(submit_path, 'r') as file:
                 username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
                 student = {'id': file.readline().strip(),
@@ -234,27 +257,62 @@ def clone(orgs, data, args):
                            'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
                           }
             check_info(student)
-            student['status'] = "OK" if check_time(stat,
-                                                   epoc_unix,
-                                                   data['deadline']) else "LATE"
+            if check_time(epoc_unix, data['deadline']):
+                student['status'] = "OK"
+            else:
+                student['status'] = "LATE"
+                info.lates.append(name)
             username = student['username']
-            add_information_to_rubric(username, student, "rubric-01.md")
+            add_information_to_rubric(username, student, rubric_file)
         except FileNotFoundError:
-            invalids.append(name)
-        except (EnvironmentError, BadInfoError):
+            info.unknowns.append(name)
+        except (EnvironmentError, BadInfoError) as err:
+            logging.info("%s: %s", name, str(err))
             student['status'] = "BAD"
-            stat['invalid'] += 1
-            add_information_to_rubric(username, student, "rubric-01.md")
+            info.invalids.append(name)
+            add_information_to_rubric(username, student, rubric_file)
 
         if student:
-            students[username] = student
+            info.students[username] = student
 
-    write_file(out_dir, students, "students.json")
+    info.write_students_json(out_dir, "info.json")
+    info.log_info()
 
-    print("There are total ", stat['count'], " submissions cloned (", stat['late'],
-          " late submissions, ", stat['invalid'], " invalid submissions)")
-    print("There are", len(invalids), " unknown submissions:")
-    print("\n".join(invalids))
+
+class Info:
+    '''The Info class that stores all information
+    '''
+
+    def __init__(self):
+        self.count = 0
+        self.lates = []
+        self.invalids = []
+        self.unknowns = []
+        self.students = {}
+
+    def log_info(self):
+        ''' Print the information afer cloning
+        '''
+        print("There are total ", self.count, " submissions cloned (", len(self.lates),
+              " late submissions, ", len(self.invalids), " invalid submissions)")
+        if self.lates:
+            print("Lates submissions:")
+            print("\n".join(self.lates))
+        if self.invalids:
+            print("Invalid submissions (lack information in submit-01):")
+            print("\n".join(self.invalids))
+        if self.unknowns:
+            print("There are", len(self.unknowns), " unknown submissions:")
+            print("\n".join(self.unknowns))
+
+    def write_students_json(self, out_dir, file_name):
+        ''' Write the records of all submissions to json file
+        '''
+        obj = {"total": self.count, "lates": self.lates,
+               "invalids": self.invalids, "unknowns": self.unknowns,
+               "students": self.students}
+        write_file(out_dir, obj, file_name)
+
 
 class TokenCreateException(Exception):
     ''' Error when token were created for this username
@@ -300,10 +358,12 @@ def create_token(data, *args):
         print(err)
         return
 
+
 class CloneProcessError(Exception):
     ''' Error cloning repository
     '''
     pass
+
 
 def clone_repo(repo_name, dir_path, *org_or_user):
     """Clone a remote repository
@@ -329,7 +389,7 @@ def clone_repo(repo_name, dir_path, *org_or_user):
                                               "/" + repo_name + ".git", path)
             return cloned_repo
         except GitCommandError:
-            raise CloneProcessError("Cloning" + repo_name +"fail")
+            raise CloneProcessError("Cloning" + repo_name + "fail")
     return Repo(path)
 
 
@@ -388,10 +448,10 @@ class BadInfoError(Exception):
 def check_info(student):
     ''' Check the provided information in submit-01 file
     '''
-    email_p = re.compile(r'\w+@cmail.carleton.ca')
+    email_p = re.compile(r'[a-zA-Z0-9_.+-]+@(cmail.)?carleton.ca')
     id_p = re.compile(r'\d{9}')
-    name_p = re.compile(r'^(\w+\s)+\w+$')
-    username_p = re.compile(r'\w+')
+    name_p = re.compile(r'^.+$')
+    username_p = re.compile(r'[a-zA-Z0-9_.+-]+')
     error = []
     if not email_p.match(student['email']):
         error.append('email')
@@ -406,13 +466,12 @@ def check_info(student):
         raise BadInfoError(message)
 
 
-def check_time(stat, current, deadline):
+def check_time(current, deadline):
     ''' Check if the submit time of the assignment (last commit time) is before
         the deadline
     '''
     if not deadline or current <= deadline:
         return True
-    stat['late'] += 1
     return False
 
 # pylint: disable=W0613
@@ -425,6 +484,8 @@ def show_data(data, *args):
 
 
 def create_remote_branch(repo, name):
+    '''Create remote branch on a repository
+    '''
     pass
 
 
@@ -439,7 +500,7 @@ def add_information_to_rubric(username, student, rubric_file_name):
 
     This help for collecting the marks after marking done
     '''
-    message = "\n{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
+    message = "\n{}\n{}\n{}".format(comment_wrap("PUT MARK HERE"),
                                     comment_wrap(student['id']),
                                     comment_wrap(username))
     try:
