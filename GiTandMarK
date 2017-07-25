@@ -112,7 +112,7 @@ def save_deadline(data, args):
     '''
     try:
         data['deadline'] = time.mktime(time.strptime(args.deadline,
-                                                     "%Y-%m-%d-%H-%M"))
+                                                     "%Y-%m-%d-%H:%M"))
     except ValueError as err:
         print(err)
 
@@ -192,7 +192,22 @@ def clone(orgs, data, args):
     print("Cloning ...")
     out_dir = make_dir(data['dir'] + "submissions")
     for name in tqdm(names):
-        clone_repo(name, out_dir)
+        error = False
+
+        # Try to clone (5 times before giving up)
+        for times in range(5):
+            try:
+                clone_repo(name, out_dir)
+                break
+            except CloneProcessError as err:
+                print(err, " . Trying again")
+                if times == 4:
+                    error = True
+                continue
+        if error:
+            invalids.append(name)
+            continue
+
         stat['count'] += 1
 
         path = os.path.abspath("%s/%s" % (out_dir, name))
@@ -206,7 +221,10 @@ def clone(orgs, data, args):
         ''' Write student information by reading the submit-01 file
         '''
         try:
-            with open(path + '/submit-01', 'r') as file:
+            submit_path = path + '/submit-01'
+            if not os.path.isfile(submit_path):
+                submit_path = submit_path + ".txt"
+            with open(submit_path, 'r') as file:
                 username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
                 student = {'id': file.readline().strip(),
                            'email': file.readline().strip(),
@@ -228,11 +246,7 @@ def clone(orgs, data, args):
             stat['invalid'] += 1
             add_information_to_rubric(username, student, "rubric-01.md")
 
-
         if student:
-            if student['status'] != "OK":
-                student['repo_path'] = path + "-" + student['status']
-                os.rename(path, student['repo_path'])
             students[username] = student
 
     write_file(out_dir, students, "students.json")
@@ -286,6 +300,10 @@ def create_token(data, *args):
         print(err)
         return
 
+class CloneProcessError(Exception):
+    ''' Error cloning repository
+    '''
+    pass
 
 def clone_repo(repo_name, dir_path, *org_or_user):
     """Clone a remote repository
@@ -302,13 +320,16 @@ def clone_repo(repo_name, dir_path, *org_or_user):
     """
     path = "%s/%s" % (dir_path, repo_name)
     if not os.path.isdir(path):
-        if not org_or_user:
-            cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
-                                          ".git", path)
-        else:
-            cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
-                                          "/" + repo_name + ".git", path)
-        return cloned_repo
+        try:
+            if not org_or_user:
+                cloned_repo = Repo.clone_from("https://github.com/SCS-Carleton/" + repo_name +
+                                              ".git", path)
+            else:
+                cloned_repo = Repo.clone_from("https://github.com/" + "/".join(org_or_user) +
+                                              "/" + repo_name + ".git", path)
+            return cloned_repo
+        except GitCommandError:
+            raise CloneProcessError("Cloning" + repo_name +"fail")
     return Repo(path)
 
 
@@ -418,11 +439,11 @@ def add_information_to_rubric(username, student, rubric_file_name):
 
     This help for collecting the marks after marking done
     '''
-    message = "{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
+    message = "\n{}\n{}\n{}\n".format(comment_wrap("PUT MARK HERE"),
                                     comment_wrap(student['id']),
                                     comment_wrap(username))
     try:
-        with open(student['repo_path'] + '/' + rubric_file_name, 'r+') as file:
+        with open(student['repo_path'] + '/' + rubric_file_name, 'a') as file:
             file.write(message)
     except FileNotFoundError:
         print("Unable to find the file!")
