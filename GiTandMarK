@@ -239,7 +239,14 @@ def clone(orgs, data, args):
         # Time in epoc-unix (integer)
         epoc_unix = Repo(path).head.commit.committed_date
         submitted_time = time.localtime(epoc_unix)
-        student = {}
+        username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
+        student = {'id': "",
+                   'email': "",
+                   'name': "",
+                   'username': username,
+                   'repo_path': path,
+                   'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
+                  }
         ''' Write student information by reading the submit-01 file
         '''
         try:
@@ -248,14 +255,11 @@ def clone(orgs, data, args):
                 if os.path.isfile(submit_path):
                     break
             with open(submit_path, 'r') as file:
-                username = re.search(r'(\w+-)((?:\w+-)*\w+)$', name).group(2)
-                student = {'id': file.readline().strip(),
-                           'email': file.readline().strip(),
-                           'name': file.readline().strip(),
-                           'username': file.readline().strip(),
-                           'repo_path': path,
-                           'submit-time': time.strftime("%H:%M %d %b %Y", submitted_time)
-                          }
+                student['id'] = file.readline().strip()
+                student['email'] = file.readline().strip()
+                student['name'] = file.readline().strip()
+                student['username'] = file.readline().strip()
+
             check_info(student)
             if check_time(epoc_unix, data['deadline']):
                 student['status'] = "OK"
@@ -264,16 +268,17 @@ def clone(orgs, data, args):
                 info.lates.append(name)
             username = student['username']
             add_information_to_rubric(username, student, rubric_file)
-        except FileNotFoundError:
-            info.unknowns.append(name)
-        except (EnvironmentError, BadInfoError) as err:
+        # except FileNotFoundError:
+        #     info.unknowns.append(name)
+        #     add_information_to_rubric(username, student, rubric_file)
+        except (FileNotFoundError, EnvironmentError, BadInfoError) as err:
             logging.info("%s: %s", name, str(err))
             student['status'] = "BAD"
             info.invalids.append(name)
             add_information_to_rubric(username, student, rubric_file)
 
-        if student:
-            info.students[username] = student
+
+        info.students[username] = student
 
     info.write_students_json(out_dir, "info.json")
     info.log_info()
