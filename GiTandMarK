@@ -52,7 +52,9 @@ def run(args, data):
     operations = {'user': set_user, 'token': create_token,
                   'deadline': save_deadline, 'dir': save_dir,
                   'clone': clone, 'add': add_files, 'info': show_data,
-                  'submit': save_submit_file, 'rubric': save_rubric_file}
+                  'submit': save_submit_file, 'rubric': save_rubric_file,
+                  'update': time_update, 'check': check_and_update,
+                  'push': push_feedback, 'deduct': deduct_mark}
     for task in list(filter(lambda key: getattr(args, key), args.__dict__.keys())):
         operations[task](data, args)
 
@@ -80,6 +82,14 @@ def args_handle():
     parser.add_argument("-s", '--submit', metavar='student information file',
                         nargs='+', help='The file that stores students information')
     parser.add_argument('-r', '--rubric', help='The rubric file name')
+    parser.add_argument('-U', '--update', metavar='cloned directory path',
+                        help="Update the students' late status")
+    parser.add_argument('-ck', '--check', metavar='GiTandMark repo path',
+                         help='Get the marking status of given folder')
+    parser.add_argument('-p', '--push', metavar='GiTandMark repo path',
+                        help='push feed back to github')
+    parser.add_argument('-de', '--deduct', metavar='GiTandMark repo path',
+                        help='Deduct the mark base on the status')
     args = parser.parse_args()
     return args
 
@@ -514,6 +524,223 @@ def add_information_to_rubric(username, student, rubric_file_name):
     except FileNotFoundError:
         print("Unable to find the file!")
         raise
+
+
+def get_info(path_to_directory):
+    ''' Get the info object from info.json in GiTandMark directory
+    '''
+    info = None
+    if not os.path.isdir(path_to_directory):
+        print("The given folder doesn't exist")
+    elif not os.path.isfile("%s/%s" % (path_to_directory, 'info.json')):
+        print("This is not a GiTandMarK directory")
+    else:
+
+        info_path = "%s/%s" % (path_to_directory, 'info.json')
+        try:
+            with open(info_path, 'r') as file:
+                info = json.load(file)
+
+            assert check_object(info)
+        except (IOError, AssertionError):
+            print("Error reading info object")
+            info = None
+
+    return info
+
+
+def time_update(data, args):
+    ''' Update the submission late status into cloned folder
+    '''
+    lates = []
+    if not data['deadline']:
+        print("Please give a deadline")
+        return
+
+    info = get_info(args.update)
+
+    if not info:
+        return
+
+    try:
+        portion = float(input("Mark deduction for late submissions: "))
+        if portion < 0 or portion > 1:
+            raise ValueError
+    except ValueError:
+        print("Pleae give a valid number (from 0 to 1)")
+        return
+
+    for dir_entry in tqdm(os.scandir(args.update)):
+        search = re.search(r'(\w+-)((?:\w+-)*\w+)$', dir_entry.name)
+        username = search.group(2) if search else ""
+        if dir_entry.is_dir() and username in info['students']:
+
+            epoc_unix = Repo(dir_entry.path).head.commit.committed_date
+            if not check_time(epoc_unix, data['deadline']):
+                info['students'][username]['status'] = "LATE " + str(portion)
+                info['students'][username]['portion'] = portion
+                lates.append(username)
+    write_file(args.update, info, 'info.json')
+    print("Late submissions: ")
+    print('\n'.join(lates))
+
+def check_object(info):
+    ''' Check the information read from info.json
+    '''
+    keys = ['invalids', 'lates', 'students', 'total', 'unknowns']
+
+    for key in keys:
+        if key not in info:
+            print(key)
+            return False
+
+
+    return True
+
+
+def check_and_update(data, args):
+    ''' Check the given repositories of marked submissions, get all the
+        information about submissions in the folder
+    '''
+    if not data['rubric_file']:
+        print("Please give the rubric file (-r)")
+        return False
+    info = get_info(args.check)
+
+    if not info:
+        return False
+    errors = []
+    print('Getting marking status....')
+    if 'done' not in info:
+
+        for dir_entry in tqdm(list(os.scandir(args.check))):
+            search = re.search(r'(\w+-)((?:\w+-)*\w+)$', dir_entry.name)
+            username = search.group(2) if search else ""
+            if dir_entry.is_dir() and username in info['students']:
+                try:
+                    info['students'][username]['mark'] = read_mark(dir_entry.path, "rubric-03.md")
+                except (IOError, ValueError):
+                    errors.append(username)
+
+        if errors:
+            print('Unmarked or error reading rubric file: ')
+            print("\n".join(errors))
+            return False
+        info['done'] = True
+        write_file(args.check, info, 'info.json')
+    print("All marking done!")
+    return True
+
+def read_mark(path, rubric_file):
+    ''' Read the mark in the rubric file
+    '''
+    mark = 0
+
+    with open("%s/%s" % (path, rubric_file), 'r') as rubric:
+        lines = rubric.readlines()
+        mark = float(re.findall( r'\d+\.\d', lines[-3])[0])
+
+    return mark
+
+
+def push_feedback(data, args):
+    ''' Create new repo branch and push feedback onto their repo
+    '''
+
+    info = get_info(args.push)
+    unexpected = []
+    if not info or not info['done'] :
+        print('Marking not done yet')
+        return
+    else:
+
+        for dir_entry in tqdm(list(os.scandir(args.push))):
+            search = re.search(r'(\w+-)((?:\w+-)*\w+)$', dir_entry.name)
+            username = search.group(2) if search else ""
+            if dir_entry.is_dir() and username in info['students']:
+                repo = Repo(dir_entry.path)
+                origin = repo.remote('origin')
+                git = repo.git
+                try:
+                    git.branch('graded')
+
+                except (GitCommandError, OSError):
+                    unexpected.append(username)
+                git.checkout('graded')
+                # repo.active_branch.checkout(orphan="graded")
+
+
+                repo.index.add([data['rubric_file']])
+                repo.index.commit("finished marking")
+                origin.push(refspec="graded:graded")
+                git.checkout('master')
+        if unexpected:
+            print('unexpected: ')
+            print("\n".join(unexpected))
+
+
+def deduct_mark(data, args):
+    ''' Deduct the marks base on the late status
+    '''
+    info = get_info(args.deduct)
+    changes = []
+    if not info or not info['done'] :
+        print('Marking not done yet')
+        return
+    else:
+
+        for dir_entry in tqdm(list(os.scandir(args.deduct))):
+            search = re.search(r'(\w+-)((?:\w+-)*\w+)$', dir_entry.name)
+            username = search.group(2) if search else ""
+            if dir_entry.is_dir() and username in info['students']:
+                if 'portion' in info['students'][username]:
+                    portion = info['students'][username]['portion']
+                    info['students'][username]['final'] = info['students'][username]['mark'] * portion
+                    changes.append("%s deducts %.1f" % (username, 100.0 - 100.0* portion))
+                    update_rubric(dir_entry, data['rubric_file'], info, username)
+                else:
+                    info['students'][username]['final'] = info['students'][username]['mark']
+        if changes:
+            print('changes: ')
+            print("\n".join(changes))
+        write_file(args.deduct, info, 'info.json')
+
+def update_rubric(dir_entry, rubric_file, info, username):
+    ''' Update rubric file after deduct the mark
+    '''
+
+    # Change to graded branch
+    repo = Repo(dir_entry.path)
+    git = repo.git
+    try:
+        git.branch('graded')
+
+    except (GitCommandError, OSError):
+        pass
+    git.checkout('graded')
+
+    try:
+        with open("%s/%s" % (dir_entry.path, rubric_file), 'r') as rubric:
+            lines = rubric.readlines()
+            print(username)
+            for idx, line in enumerate(lines):
+                if re.search("final grade", line):
+                    lines[idx] = "%.1f/100 grade || deduct %.1f || Final mark: %.1f\n" % (
+                                     info['students'][username]['mark'],
+                                     100 - info['students'][username]['portion']*100,
+                                     info['students'][username]['final'])
+                elif idx == (len(lines)-3):
+                    lines[idx] = "<!-- %.1f -->\n" % info['students'][username]['final']
+
+        with open("%s/%s" % (dir_entry.path, rubric_file), 'w') as rubric:
+            rubric.writelines(lines)
+
+    except FileNotFoundError:
+        print("Can not find the file")
+
+    repo.index.add([rubric_file])
+    repo.index.commit("update mark")
+    git.checkout('master')
 
 
 if __name__ == '__main__':
