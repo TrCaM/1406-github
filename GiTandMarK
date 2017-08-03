@@ -20,6 +20,7 @@ import re
 import sys
 import logging
 import csv
+from string import Template
 from functools import wraps
 from github import Github, GithubException
 from tqdm import tqdm
@@ -113,7 +114,7 @@ def get_data():
     except (IOError, AssertionError):
         data = {'user': None, 'token': None, 'dir': './', 'deadline': None,
                 'bonus': None, 'commits': 0, 'submit_file': [],
-                'rubric_file': None}
+                'rubric_file': None, 'done' : False}
     return data
 
 
@@ -728,20 +729,18 @@ def push_feedback(data, args):
                 repo = Repo(dir_entry.path)
                 origin = repo.remote('origin')
                 git = repo.git
-                # repo.index.add([data['rubric_file']])
-                # repo.index.commit("finished marking")
+
                 try:
                     git.branch('graded')
 
                 except (GitCommandError, OSError):
                     unexpected.append(username)
                 git.checkout('graded')
-                # repo.active_branch.checkout(orphan="graded")
 
                 repo.index.add([data['rubric_file']])
                 repo.index.commit("finished marking")
                 origin.push(refspec="graded:graded")
-                # git.checkout('master')
+
         print_list(unexpected, "These students get mark bonus or penaty: ")
 
 
@@ -801,10 +800,9 @@ def update_rubric(dir_entry, rubric_file, info, username):
             lines = rubric.readlines()
             for idx, line in enumerate(lines):
                 if re.search("final grade", line):
-                    lines[idx] = "%.1f/100 final grade || deduct %.1f || Final mark: %.1f\n" % (
-                        info['students'][username]['mark'],
-                        100 - info['students'][username]['portion'] * 100,
-                        info['students'][username]['final'])
+                    temp = Template("${mark}/100 final grade"
+                                    " | portion $portion | Final mark: ${final}\n")
+                    lines[idx] = temp.substitute(info['students'][username])
                 elif idx == (len(lines) - 3):
                     lines[idx] = "<!-- %.1f -->\n" % info['students'][username]['final']
 
