@@ -69,37 +69,47 @@ def args_handle():
     ''' Handle input options via command line arguments
     '''
     parser = argparse.ArgumentParser(prog='GiT_AnD_MaRk')
-    parser.add_argument("-u", "--user", help="authorize with github username")
-    parser.add_argument("-t", "--token", action="store_true",
-                        help="authorize by creating OAuth token")
-    parser.add_argument("-c", "--clone", metavar='prefix', help="clone all \
-                        repository in SCS-Carleton beginning with the pattern")
-    parser.add_argument("-d", "--dir", metavar='directory', help="the \
-                        directory path to save the clone folder")
-    parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*',
-                        help="Commit files to the remote \
-                        repositories of all students")
-    parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
-                        help="specify the deadline for current assignment")
-    parser.add_argument("-b", "--bonus", metavar="YYYY-MM-DD-H:M",
-                        help="specify the bonus deadline for current assignment")
+    subparsers = parser.add_subparsers(help='Command help:')
+
+    git_parser = subparsers.add_parser(
+        'git', help='Commands to communicate with git')
+    git_parser.add_argument(
+        "-u", "--user", help="authorize with github username")
+    git_parser.add_argument("-t", "--token", action="store_true",
+                            help="authorize by creating OAuth token")
+    git_parser.add_argument("-c", "--clone", metavar='prefix', help="clone all \
+                            repository in SCS-Carleton beginning with the pattern")
+    git_parser.add_argument("-d", "--dir", metavar='directory', help="the \
+                            directory path to save the clone folder")
+    git_parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*',
+                            help="Commit files to the remote \
+                            repositories of all students")
+    info_parser = subparsers.add_parser(
+        'info', help="Working with submissions' infomation")
+    info_parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
+                             help="specify the deadline for current assignment")
+    info_parser.add_argument("-b", "--bonus", metavar="YYYY-MM-DD-H:M",
+                             help="specify the bonus deadline for current assignment")
     parser.add_argument("-i", "--info", action="store_true",
                         help="Show some information")
-    parser.add_argument("-s", '--submit', metavar='student information file',
-                        nargs='+', help='The file that stores students information')
-    parser.add_argument('-r', '--rubric', help='The rubric file name')
-    parser.add_argument('-U', '--update', metavar='cloned directory path',
-                        help="Update the students' late status")
-    parser.add_argument('-ck', '--check', metavar='GiTandMark repo path',
-                        help='Get the marking status of given folder')
-    parser.add_argument("-B", "--BONUS", action="store_true",
-                        help="specify if we have bonus for this assingment (use with --update)")
-    parser.add_argument('-p', '--push', metavar='GiTandMark repo path',
-                        help='push feed back to github')
-    parser.add_argument('-de', '--deduct', metavar='GiTandMark repo path',
-                        help='Deduct the mark base on the status')
-    parser.add_argument('-C', '--CSV', metavar='info.json based file path',
-                        help='Generate the CSV file for uploading on the system')
+    info_parser.add_argument("-s", '--submit', metavar='student information file',
+                             nargs='+', help='The file that stores students information')
+    info_parser.add_argument('-r', '--rubric', help='The rubric file name')
+    submit_parser = subparsers.add_parser(
+        'submit', help="Working with marked submissions")
+    submit_parser.add_argument('-U', '--update', metavar='cloned directory path',
+                               help="Update the students' late status")
+    submit_parser.add_argument('-ck', '--check', metavar='GiTandMark repo path',
+                               help='Get the marking status of given folder')
+    submit_parser.add_argument("-B", "--BONUS", action="store_true",
+                               help="specify if we have bonus for this \
+                               assingment (use with --update)")
+    submit_parser.add_argument('-p', '--push', metavar='GiTandMark repo path',
+                               help='push feed back to github')
+    submit_parser.add_argument('-de', '--deduct', metavar='GiTandMark repo path',
+                               help='Deduct the mark base on the status')
+    submit_parser.add_argument('-C', '--CSV', metavar='info.json based file path',
+                               help='Generate the CSV file for uploading on the system')
     args = parser.parse_args()
     return args
 
@@ -114,7 +124,7 @@ def get_data():
     except (IOError, AssertionError):
         data = {'user': None, 'token': None, 'dir': './', 'deadline': None,
                 'bonus': None, 'commits': 0, 'submit_file': [],
-                'rubric_file': None, 'done' : False}
+                'rubric_file': None, 'done': False}
     return data
 
 
