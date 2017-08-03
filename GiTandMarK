@@ -56,6 +56,8 @@ def run(args, data):
     write_file("./data", data, "data.json")
 
 # pylint: disable= W0613
+
+
 def nothing(args, data):
     ''' A function that do nothing
     '''
@@ -328,9 +330,10 @@ class Info:
         print("There are total ", self.count, " submissions cloned (", len(self.lates),
               " late submissions, ", len(self.invalids), " invalid submissions)")
         print_list(self.lates, "Lates submissions")
-        print_list(self.invalids, "Invalid submissions (lack information in submit-01):")
-        print_list(self.unknowns, "There are %d unknown submissions:" % len(self.unknowns))
-
+        print_list(self.invalids,
+                   "Invalid submissions (lack information in submit-01):")
+        print_list(self.unknowns, "There are %d unknown submissions:" %
+                   len(self.unknowns))
 
     def write_students_json(self, out_dir, file_name):
         ''' Write the records of all submissions to json file
@@ -561,6 +564,29 @@ def get_info(path_to_directory):
     return info
 
 
+def get_info_from_file(path_to_file):
+    ''' Get the info object from a json file
+    '''
+    info = None
+
+    if not os.path.splitext(path_to_file)[1] == '.json':
+        print("The given file is not a json file")
+    elif not os.path.isfile(path_to_file):
+        print("The file doesn't exist")
+    else:
+
+        try:
+            with open(path_to_file, 'r') as file:
+                info = json.load(file)
+
+            assert check_object(info)
+        except (IOError, AssertionError):
+            print("Error reading info object")
+            info = None
+
+    return info
+
+
 def time_update(data, args):
     ''' Update the submission late status into cloned folder
     '''
@@ -611,7 +637,6 @@ def time_update(data, args):
                 earlies.append(username)
     write_file(args.update, info, 'info.json')
 
-
     print_list(lates, "Late submissions: ")
     print_list(earlies, "Early submissions: ")
 
@@ -627,6 +652,7 @@ def check_object(info):
             return False
 
     return True
+
 
 def print_list(the_list, message):
     ''' Print any list with the message
@@ -796,6 +822,29 @@ def update_rubric(dir_entry, rubric_file, info, username):
 def generate_csv(data, args):
     ''' Generate CSV of students records to be uploaded on CULearn
     '''
+    info = get_info_from_file(args.CSV)
+
+    if not info:
+        return
+
+    students = info['students']
+
+    filename = os.path.splitext(args.CSV)[0]
+    fieldnames = ['name', 'id', 'email', 'username', 'mark', 'final',
+                  'status', 'submit-time']
+    with open("%s.csv" % filename, 'w') as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+
+        writer.writeheader()
+
+        for student in students:
+            obj = {}
+
+            if all(key in students[student] for key in fieldnames):
+
+                for key in fieldnames:
+                    obj[key] = students[student][key]
+                writer.writerow(obj)
 
 
 if __name__ == '__main__':
