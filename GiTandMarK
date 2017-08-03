@@ -26,6 +26,7 @@ from github import Github, GithubException
 from tqdm import tqdm
 from git import Repo, GitCommandError
 
+# TODO: Unzip (like done with Java)
 
 def main():
     """ The main function of the script
@@ -84,6 +85,7 @@ def args_handle():
     git_parser.add_argument("-a", "--add", metavar='prefix and files ', nargs='*',
                             help="Commit files to the remote \
                             repositories of all students")
+
     info_parser = subparsers.add_parser(
         'info', help="Working with submissions' infomation")
     info_parser.add_argument("-dl", "--deadline", metavar="YYYY-MM-DD-H:M",
@@ -95,6 +97,7 @@ def args_handle():
     info_parser.add_argument("-s", '--submit', metavar='student information file',
                              nargs='+', help='The file that stores students information')
     info_parser.add_argument('-r', '--rubric', help='The rubric file name')
+
     submit_parser = subparsers.add_parser(
         'submit', help="Working with marked submissions")
     submit_parser.add_argument('-U', '--update', metavar='cloned directory path',
@@ -110,6 +113,10 @@ def args_handle():
                                help='Deduct the mark base on the status')
     submit_parser.add_argument('-C', '--CSV', metavar='info.json based file path',
                                help='Generate the CSV file for uploading on the system')
+
+    util_parser = subparsers.add_parser('util', help="More utilities of the program")
+    culearn_parser = subparsers.add_parser('culearn', help="CULearn zip submission handle")
+
     args = parser.parse_args()
     return args
 
